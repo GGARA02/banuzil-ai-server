@@ -99,6 +99,7 @@ banuzil-ai-server/
 │   ├── routers/emotion.py           # → routers/emotion.py로 이전됨
 │   └── services/emotion_service.py  # → services/emotion_service.py로 이전됨
 │
+├── test_client.html                 # 브라우저 테스트 클라이언트 (http://localhost:8000/test)
 ├── API_SPEC.md                      # Spring 연동용 API 명세서
 ├── OVERVIEW.md                      # 이 파일
 └── .env                             # 환경 변수 (git 제외)

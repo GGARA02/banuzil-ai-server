@@ -169,9 +169,15 @@ Spring이 이 서버를 호출하는 전체 순서.
 | `risk_flag` | boolean | `true`이면 위험 신호 감지 — 즉시 상담 중단 |
 | `risk_category` | string | 위험 유형 ("자해", "자살", "폭행" 등). risk_flag=true일 때만 유효 |
 | `stage_progress` | integer | 현재 단계 진행도 (0~100) |
-| `bullet_detected` | boolean | 총알잡기 감지 여부 (로깅용) |
-| `eval_score` | float \| null | 응답 품질 가중평균 점수 (1~5). 로깅/모니터링용 |
+| `bullet_detected` | boolean | 총알잡기 감지 여부 |
+| `bullet_type` | string | `"Reactive"` / `"Mistrust"` / `"None"` |
+| `eval_score` | float \| null | 응답 품질 가중평균 점수 (1~5) |
+| `eval_scores` | object \| null | Self-Refine 세부 점수 (`neutrality`, `validation_depth`, `attach_coherence`, `cycle_reframing`, `actionability`, `safety`, `weighted_avg`) |
 | `neutrality_result` | object \| null | 중립성 검사 결과 (상세 내용 아래 참고) |
+| `f_emotion` | object \| null | KoELECTRA 여성 감성 분석 결과 (`category` Top-2, `detail` Top-3) |
+| `m_emotion` | object \| null | KoELECTRA 남성 감성 분석 결과 |
+| `signals_state` | object \| null | EFT 진행 신호 누적 상태 `{"f": {...}, "m": {...}}` |
+| `risk_keywords` | array | 감지된 위험 키워드 목록. `risk_flag=true`일 때만 비어있지 않음 |
 
 **`neutrality_result` 필드:**
 
@@ -194,15 +200,38 @@ Spring이 이 서버를 호출하는 전체 순서.
   "needs_cycle_definition": false,
   "risk_flag": false,
   "risk_category": "",
+  "risk_keywords": [],
   "stage_progress": 35,
   "bullet_detected": false,
+  "bullet_type": "None",
   "eval_score": 4.25,
+  "eval_scores": {
+    "neutrality": 4.0,
+    "validation_depth": 4.5,
+    "attach_coherence": 4.0,
+    "cycle_reframing": 4.0,
+    "actionability": 4.5,
+    "safety": 5.0,
+    "weighted_avg": 4.25
+  },
   "neutrality_result": {
     "score": 4.5,
     "bias_direction": "none",
     "passed": true,
     "violations": [],
     "regen_triggered": false
+  },
+  "f_emotion": {
+    "category": [{"rank": 1, "label": "슬픔", "score": 0.68}, {"rank": 2, "label": "불안", "score": 0.21}],
+    "detail":   [{"rank": 1, "label": "외로운", "score": 0.45}, {"rank": 2, "label": "서러운", "score": 0.31}, {"rank": 3, "label": "허전한", "score": 0.14}]
+  },
+  "m_emotion": {
+    "category": [{"rank": 1, "label": "당황", "score": 0.55}, {"rank": 2, "label": "불안", "score": 0.30}],
+    "detail":   [{"rank": 1, "label": "난감한", "score": 0.40}, {"rank": 2, "label": "걱정스러운", "score": 0.35}, {"rank": 3, "label": "혼란스러운", "score": 0.15}]
+  },
+  "signals_state": {
+    "f": {"emotion": true, "patternAware": false, "otherSide": false, "relationConcern": true, "vulnerability": false, "empathy": false, "recoveryWill": false, "newComm": false},
+    "m": {"emotion": false, "patternAware": false, "otherSide": true,  "relationConcern": false, "vulnerability": false, "empathy": false, "recoveryWill": false, "newComm": false}
   }
 }
 ```
@@ -216,7 +245,8 @@ Spring이 이 서버를 호출하는 전체 순서.
   "m_message": "지금 당신의 안전이 가장 중요합니다. 상담을 잠시 중단합니다.",
   "eft_stage": 1,
   "risk_flag": true,
-  "risk_category": "자해"
+  "risk_category": "자해",
+  "risk_keywords": ["손목", "긋"]
 }
 ```
 
