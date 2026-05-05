@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# 환경 변수
+.env
+.env.*
+
+# PyTorch 모델 바이너리 (용량 큰 이진 파일 — 별도 스토리지 관리)
+*.pt
+
+# 학습 체크포인트 (중간 결과물)
+*_checkpoints/
+
+# 전처리된 데이터 (재생성 가능)
+data/processed/
+
+# 원본 데이터 (저작권/용량)
+data/raw/
+
+# IDE
+.vscode/
+.idea/
+*.sublime-project
+
+# OS
+.DS_Store
+Thumbs.db
