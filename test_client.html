@@ -1,0 +1,619 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>바느질 AI — 테스트 클라이언트</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
+  :root {
+    --bg:#f5f5f5; --surface:#ffffff; --surface2:#f9f9f9;
+    --border:#e0e0e0; --border2:#d0d0d0;
+    --female:#c2185b; --female-bg:#fce4ec;
+    --male:#1565c0;   --male-bg:#e3f2fd;
+    --ai:#2e7d32;     --ai-bg:#e8f5e9;
+    --warn:#e65100;   --warn-bg:#fff3e0;
+    --danger:#b71c1c; --danger-bg:#ffebee;
+    --muted:#9e9e9e;  --text:#212121; --text2:#616161;
+    --radius:6px; --shadow:0 1px 3px rgba(0,0,0,.1);
+  }
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{background:var(--bg);color:var(--text);font-family:'Noto Sans KR',sans-serif;font-size:13px;line-height:1.65;min-height:100vh;}
+  header{background:var(--surface);padding:13px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;box-shadow:var(--shadow);}
+  header h1{font-size:14px;font-weight:600;}
+  .badge{font-family:'JetBrains Mono',monospace;font-size:10px;padding:2px 7px;border-radius:3px;background:#eee;color:var(--muted);border:1px solid var(--border);}
+  .badge.live{background:#e8f5e9;color:var(--ai);border-color:#a5d6a7;}
+  .badge.danger-b{background:var(--danger-bg);color:var(--danger);border-color:#ef9a9a;}
+  .status-dot{width:8px;height:8px;border-radius:50%;background:var(--muted);flex-shrink:0;transition:background .2s;}
+  .status-dot.ok{background:#43a047;box-shadow:0 0 5px #43a047;}
+  .status-dot.err{background:var(--danger);}
+  .status-dot.busy{background:#fb8c00;animation:pulse .7s infinite;}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+  .layout{display:grid;grid-template-columns:255px 1fr 275px;height:calc(100vh - 47px);}
+  .panel{background:var(--surface);border-right:1px solid var(--border);overflow-y:auto;scrollbar-width:thin;scrollbar-color:#ddd transparent;}
+  .panel-title{font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--muted);letter-spacing:.1em;text-transform:uppercase;padding:10px 14px 7px;border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--surface);z-index:1;}
+  .panel-body{padding:12px 14px;display:flex;flex-direction:column;gap:10px;}
+  label{display:block;font-size:11px;color:var(--text2);margin-bottom:2px;margin-top:5px;}
+  label:first-child{margin-top:0;}
+  input[type=text],input[type=number],textarea{width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);padding:6px 9px;font-size:12px;font-family:inherit;outline:none;transition:border-color .15s;}
+  input:focus,textarea:focus{border-color:#90a4ae;}
+  textarea{resize:vertical;min-height:50px;}
+  .row2{display:grid;grid-template-columns:1fr 1fr;gap:7px;}
+  button{cursor:pointer;border:1px solid transparent;border-radius:var(--radius);font-family:inherit;font-size:12px;font-weight:500;padding:7px 12px;transition:opacity .15s;}
+  button:hover{opacity:.85;}
+  button:disabled{opacity:.4;cursor:not-allowed;}
+  .btn-primary{background:#1976d2;color:#fff;width:100%;margin-top:4px;}
+  .btn-danger{background:var(--danger);color:#fff;}
+  .btn-warn{background:var(--warn);color:#fff;}
+  .btn-outline{background:var(--surface);color:var(--text2);border-color:var(--border);}
+  .btn-female{background:var(--female);color:#fff;flex:1;}
+  .btn-male{background:var(--male);color:#fff;flex:1;}
+  .info-card{background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius);padding:9px 11px;font-size:11px;line-height:1.8;}
+  .info-card .fc{color:var(--female);font-weight:500;}
+  .info-card .mc{color:var(--male);font-weight:500;}
+  .info-card .dc{color:var(--danger);font-weight:600;}
+  .main{display:flex;flex-direction:column;overflow:hidden;border-right:1px solid var(--border);}
+  .pills-row{display:flex;flex-wrap:wrap;gap:5px;padding:7px 13px;border-bottom:1px solid var(--border);background:var(--surface2);}
+  .pill{font-family:'JetBrains Mono',monospace;font-size:10px;padding:2px 8px;border-radius:3px;border:1px solid var(--border);background:var(--surface);color:var(--text2);}
+  .pill.stage1{border-color:#a5d6a7;color:#2e7d32;background:#e8f5e9;}
+  .pill.stage2{border-color:#ffe082;color:#e65100;background:#fff8e1;}
+  .pill.stage3{border-color:#90caf9;color:#1565c0;background:#e3f2fd;}
+  .pill.bullet{border-color:#ef9a9a;color:var(--danger);background:var(--danger-bg);}
+  .tabs{display:flex;border-bottom:1px solid var(--border);background:var(--surface);}
+  .tab{padding:9px 15px;font-size:12px;color:var(--muted);cursor:pointer;border-bottom:2px solid transparent;transition:all .15s;}
+  .tab.active{color:#1976d2;border-bottom-color:#1976d2;font-weight:500;}
+  .tab-content{display:none;flex:1;overflow:hidden;flex-direction:column;}
+  .tab-content.active{display:flex;}
+  .chat-area{flex:1;overflow-y:auto;padding:11px;display:flex;gap:9px;background:var(--bg);}
+  .chat-col{flex:1;display:flex;flex-direction:column;gap:7px;min-width:0;}
+  .chat-col-header{font-size:11px;font-weight:600;font-family:'JetBrains Mono',monospace;padding:3px 0;border-bottom:2px solid;margin-bottom:4px;letter-spacing:.05em;}
+  .chat-col-header.f{color:var(--female);border-color:var(--female);}
+  .chat-col-header.m{color:var(--male);border-color:var(--male);}
+  .msg{padding:8px 11px;border-radius:var(--radius);font-size:12px;line-height:1.7;white-space:pre-wrap;word-break:break-word;border-left:3px solid;animation:fadein .2s ease;}
+  @keyframes fadein{from{opacity:0;transform:translateY(3px)}to{opacity:1;transform:none}}
+  .msg.user-f{background:var(--female-bg);border-color:var(--female);}
+  .msg.user-m{background:var(--male-bg);border-color:var(--male);}
+  .msg.ai{background:var(--ai-bg);border-color:var(--ai);}
+  .msg.system{background:#fafafa;border-color:#ccc;color:var(--text2);font-size:11px;}
+  .msg.warning{background:var(--warn-bg);border-color:var(--warn);color:var(--warn);}
+  .msg.danger{background:var(--danger-bg);border-color:var(--danger);color:var(--danger);font-weight:600;}
+  .msg-label{font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--muted);margin-bottom:3px;}
+  .input-area{border-top:1px solid var(--border);padding:9px 13px;background:var(--surface);display:flex;flex-direction:column;gap:7px;}
+  .input-row{display:grid;grid-template-columns:1fr 1fr;gap:9px;}
+  .input-col label{font-size:11px;font-weight:500;margin-bottom:3px;}
+  .input-col label.f{color:var(--female);}
+  .input-col label.m{color:var(--male);}
+  .btn-row{display:flex;gap:7px;justify-content:flex-end;align-items:center;}
+  .log-area{flex:1;overflow-y:auto;padding:9px 13px;font-family:'JetBrains Mono',monospace;font-size:11px;line-height:1.9;background:var(--bg);}
+  .log-entry .ts{color:var(--muted);margin-right:8px;}
+  .log-entry .req{color:#1565c0;}
+  .log-entry .res{color:#2e7d32;}
+  .log-entry .err{color:var(--danger);}
+  .log-entry .inf{color:var(--muted);}
+  .cycle-box{background:#e3f2fd;border:1px solid #90caf9;border-radius:var(--radius);padding:11px;margin:6px 11px;font-size:12px;}
+  .cycle-box h4{color:var(--male);font-size:11px;margin-bottom:6px;font-weight:600;}
+  .cycle-def{color:var(--text);line-height:1.7;white-space:pre-wrap;}
+  .agree-btns{display:flex;gap:8px;margin-top:8px;}
+  .analysis-panel{border-right:none;border-left:1px solid var(--border);}
+  .asec{border-bottom:1px solid var(--border);padding:9px 13px;}
+  .asec-title{font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.1em;margin-bottom:7px;}
+  .emotion-block{margin-bottom:8px;}
+  .emotion-label{font-size:11px;color:var(--text2);margin-bottom:4px;font-weight:500;}
+  .emotion-label span{font-weight:400;color:var(--muted);font-size:10px;}
+  .emotion-row{display:flex;align-items:center;gap:5px;margin-bottom:3px;}
+  .emotion-name{font-size:11px;width:65px;flex-shrink:0;color:var(--text);}
+  .emotion-bar-wrap{flex:1;background:#f0f0f0;border-radius:2px;height:9px;overflow:hidden;}
+  .emotion-bar{height:100%;border-radius:2px;transition:width .3s;}
+  .emotion-bar.cat{background:#42a5f5;}
+  .emotion-bar.det{background:#66bb6a;}
+  .emotion-score{font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--muted);width:34px;text-align:right;}
+  .empty-note{font-size:11px;color:var(--muted);font-style:italic;}
+  .bullet-card{background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius);padding:8px 10px;font-size:11px;}
+  .bullet-card.reactive{background:var(--danger-bg);border-color:#ef9a9a;}
+  .bullet-card.mistrust{background:var(--warn-bg);border-color:#ffcc02;}
+  .bullet-card.none{background:var(--ai-bg);border-color:#a5d6a7;}
+  .bullet-type{font-weight:600;font-size:12px;margin-bottom:3px;}
+  .bt-reactive{color:var(--danger);}
+  .bt-mistrust{color:var(--warn);}
+  .bt-none{color:var(--ai);}
+  .risk-card{background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius);padding:8px 10px;font-size:11px;}
+  .risk-card.on{background:var(--danger-bg);border-color:#ef9a9a;}
+  .risk-kw-list{display:flex;flex-wrap:wrap;gap:4px;margin-top:5px;}
+  .risk-kw{background:var(--danger);color:#fff;border-radius:3px;padding:1px 6px;font-family:'JetBrains Mono',monospace;font-size:10px;}
+  .eval-row{display:flex;align-items:center;gap:5px;margin-bottom:4px;}
+  .eval-name{font-size:11px;color:var(--text2);width:72px;flex-shrink:0;}
+  .eval-bw{flex:1;background:#f0f0f0;border-radius:2px;height:8px;overflow:hidden;}
+  .eval-bar{height:100%;border-radius:2px;transition:width .3s;}
+  .eval-score{font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--muted);width:22px;text-align:right;}
+  .eval-avg{font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:600;margin-top:5px;}
+  .sig-grid{display:grid;grid-template-columns:1fr 1fr;gap:3px;}
+  .sig-item{font-size:10px;padding:3px 5px;border-radius:3px;background:#f5f5f5;border:1px solid var(--border);color:var(--muted);font-family:'JetBrains Mono',monospace;}
+  .sig-item.on{background:#e8f5e9;border-color:#a5d6a7;color:#2e7d32;}
+  .hidden{display:none!important;}
+</style>
+</head>
+<body>
+
+<header>
+  <span class="status-dot" id="statusDot"></span>
+  <h1>바느질 AI — 테스트 클라이언트</h1>
+  <span class="badge">Spring 대역</span>
+  <span class="badge live" id="sessionBadge">세션 없음</span>
+  <span class="badge danger-b hidden" id="riskBadge">🚨 위험 감지</span>
+</header>
+
+<div class="layout">
+
+  <!-- 좌측 사이드바 -->
+  <div class="panel">
+    <div class="panel-title">설정</div>
+    <div class="panel-body">
+      <div>
+        <label>Python 서버 URL</label>
+        <input type="text" id="serverUrl" value="http://localhost:8000">
+      </div>
+      <div>
+        <div style="font-size:11px;font-weight:600;margin-bottom:5px;">세션 생성</div>
+        <label>Session ID</label>
+        <input type="text" id="sessionId" value="test-001">
+        <div style="margin-top:7px;font-size:11px;font-weight:500;color:var(--female);">여성</div>
+        <div class="row2">
+          <div><label>불안(1~7)</label><input type="number" id="fAnxiety" value="4.5" min="1" max="7" step="0.1"></div>
+          <div><label>회피(1~7)</label><input type="number" id="fAvoidance" value="2.1" min="1" max="7" step="0.1"></div>
+        </div>
+        <label>MBTI</label>
+        <input type="text" id="fMbti" value="ENFP" maxlength="4" style="text-transform:uppercase">
+        <div style="margin-top:7px;font-size:11px;font-weight:500;color:var(--male);">남성</div>
+        <div class="row2">
+          <div><label>불안(1~7)</label><input type="number" id="mAnxiety" value="1.8" min="1" max="7" step="0.1"></div>
+          <div><label>회피(1~7)</label><input type="number" id="mAvoidance" value="4.2" min="1" max="7" step="0.1"></div>
+        </div>
+        <label>MBTI</label>
+        <input type="text" id="mMbti" value="ISTJ" maxlength="4" style="text-transform:uppercase">
+        <button class="btn-primary" onclick="createSession()">세션 생성</button>
+      </div>
+      <div id="sessionInfo" class="info-card hidden"></div>
+      <div>
+        <div style="font-size:11px;font-weight:600;margin-bottom:5px;">디버그</div>
+        <div style="display:flex;flex-direction:column;gap:4px;">
+          <button class="btn-outline" onclick="deleteSession()" style="font-size:11px;">세션 삭제</button>
+          <button class="btn-warn" onclick="triggerCycle()" style="font-size:11px;">사이클 절차 트리거</button>
+          <button class="btn-outline" onclick="triggerReport()" style="font-size:11px;">보고서 생성</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 메인 채팅 -->
+  <div class="main">
+    <div class="pills-row" id="pillsRow">
+      <span class="pill" id="pillStage">EFT —</span>
+      <span class="pill" id="pillProgress">진행도 —</span>
+      <span class="pill" id="pillRound">라운드 0</span>
+      <span class="pill bullet hidden" id="pillBullet">⚡ 총알</span>
+      <span class="pill" id="pillEval">평가 —</span>
+    </div>
+    <div class="tabs">
+      <div class="tab active" onclick="switchTab('chat',this)">대화</div>
+      <div class="tab" onclick="switchTab('log',this)">요청 로그</div>
+    </div>
+    <div class="tab-content active" id="tab-chat">
+      <div class="chat-area" id="chatArea">
+        <div class="chat-col" id="chatF"><div class="chat-col-header f">여성 채널</div></div>
+        <div class="chat-col" id="chatM"><div class="chat-col-header m">남성 채널</div></div>
+      </div>
+      <div class="cycle-box hidden" id="cycleBox">
+        <h4>⬡ 사이클 정의 절차</h4>
+        <div class="cycle-def" id="cycleDef"></div>
+        <div class="agree-btns hidden" id="cycleAgreeBtns">
+          <button class="btn-female" onclick="agreeAllCycle()">양측 동의 ✓</button>
+          <button class="btn-outline" onclick="hideCycleBox()">계속 상담</button>
+        </div>
+        <div id="cycleExploreBtns" class="hidden">
+          <p style="font-size:11px;color:var(--muted);margin-top:5px;">탐색 답변 입력 후 라운드 진행하세요.</p>
+          <button class="btn-male" style="margin-top:5px;font-size:11px;" onclick="generateCycleDef()">사이클 정의 생성 →</button>
+        </div>
+      </div>
+      <div class="input-area">
+        <div class="input-row">
+          <div class="input-col">
+            <label class="f">여성 발화</label>
+            <textarea id="fReply" placeholder="여성 내담자 발화..." maxlength="500"></textarea>
+          </div>
+          <div class="input-col">
+            <label class="m">남성 발화</label>
+            <textarea id="mReply" placeholder="남성 내담자 발화..." maxlength="500"></textarea>
+          </div>
+        </div>
+        <div class="btn-row">
+          <span id="charCount" style="font-size:10px;color:var(--muted);font-family:'JetBrains Mono',monospace;"></span>
+          <button class="btn-outline" onclick="fillExample()" style="font-size:11px;">예시</button>
+          <button class="btn-primary" id="sendBtn" onclick="sendRound()" disabled style="width:110px;margin:0;">전송 (Ctrl+↵)</button>
+        </div>
+      </div>
+    </div>
+    <div class="tab-content" id="tab-log">
+      <div class="log-area" id="logArea"></div>
+    </div>
+  </div>
+
+  <!-- 우측 분석 패널 -->
+  <div class="panel analysis-panel">
+    <div class="panel-title">실시간 분석</div>
+
+    <!-- 중립 검사 -->
+    <div class="asec">
+      <div class="asec-title">⚖️ 중립 검사 AI</div>
+      <div id="neutralityPanel">
+        <div class="empty-note">라운드 후 표시됩니다.</div>
+      </div>
+    </div>
+
+    <!-- 감성 분석 -->
+    <div class="asec">
+      <div class="asec-title">🧠 KoELECTRA 감성 분석</div>
+      <div id="emotionPanel"><div class="empty-note">라운드 후 표시됩니다.</div></div>
+    </div>
+
+    <!-- 총알잡기 -->
+    <div class="asec">
+      <div class="asec-title">⚡ 총알잡기 (Catching the Bullet)</div>
+      <div id="bulletPanel">
+        <div class="bullet-card none">
+          <div class="bullet-type bt-none">🟢 감지 없음</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:3px;">이번 라운드 총알이 없습니다.</div>
+        </div>
+      </div>
+      <div style="font-size:10px;color:var(--muted);margin-top:6px;line-height:1.6;"><b>Reactive</b>: 비난·공격 (1단계 방어)<br><b>Mistrust</b>: 혼란·불신 (2단계 방어)</div>
+    </div>
+
+    <!-- 위험 키워드 -->
+    <div class="asec">
+      <div class="asec-title">🚨 위험 신호 (Risk Gate)</div>
+      <div id="riskPanel">
+        <div class="risk-card">
+          <div style="font-size:11px;color:var(--ai);font-weight:500;">✓ 위험 키워드 없음</div>
+          <div style="font-size:10px;color:var(--muted);margin-top:4px;line-height:1.6;">감지: 자해·자살·폭행·스토킹·데이트폭력<br>하드코딩 기반 (LLM 없이 즉시 감지)</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Self-Refine 평가 -->
+    <div class="asec">
+      <div class="asec-title">📊 Self-Refine 평가</div>
+      <div id="evalPanel"><div class="empty-note">라운드 후 표시됩니다.</div></div>
+    </div>
+
+    <!-- EFT 신호 -->
+    <div class="asec">
+      <div class="asec-title">📡 EFT 진행 신호</div>
+      <div id="signalPanel"><div class="empty-note">라운드 후 표시됩니다.</div></div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+let STATE = { sessionId:null, roundNum:0, eftStage:1, busy:false };
+
+function switchTab(id,el){
+  document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+  document.querySelectorAll('.tab-content').forEach(t=>t.classList.remove('active'));
+  el.classList.add('active');
+  document.getElementById('tab-'+id).classList.add('active');
+}
+function log(type,msg){
+  const el=document.getElementById('logArea');
+  const ts=new Date().toLocaleTimeString('ko-KR',{hour12:false});
+  const d=document.createElement('div');
+  d.className='log-entry';
+  d.innerHTML=`<span class="ts">${ts}</span><span class="${type}">${esc(msg)}</span>`;
+  el.appendChild(d); el.scrollTop=el.scrollHeight;
+}
+function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+function addMsg(col,type,label,content){
+  const el=document.getElementById(col==='f'?'chatF':'chatM');
+  const d=document.createElement('div');
+  d.className=`msg ${type}`;
+  d.innerHTML=`<div class="msg-label">${label}</div>${esc(content)}`;
+  el.appendChild(d);
+  document.getElementById('chatArea').scrollTop=99999;
+}
+function addSys(msg){['f','m'].forEach(c=>addMsg(c,'system','SYSTEM',msg));}
+function setDot(s){document.getElementById('statusDot').className='status-dot '+s;}
+
+function updatePills(data){
+  const stage=data.eft_stage||STATE.eftStage;
+  const names={1:'1단계 De-escalation',2:'2단계 Restructuring',3:'3단계 Consolidation'};
+  const cls={1:'stage1',2:'stage2',3:'stage3'};
+  const ps=document.getElementById('pillStage');
+  ps.textContent='EFT '+(names[stage]||stage);
+  ps.className='pill '+(cls[stage]||'');
+  document.getElementById('pillProgress').textContent=`진행도 ${data.stage_progress||0}%`;
+  document.getElementById('pillRound').textContent=`라운드 ${STATE.roundNum}`;
+  const bp=document.getElementById('pillBullet');
+  if(data.bullet_detected){bp.classList.remove('hidden');bp.textContent=`⚡ ${data.bullet_type||'총알'}`;} else bp.classList.add('hidden');
+  if(data.eval_score!=null){
+    const ep=document.getElementById('pillEval');
+    ep.textContent=`평가 ${data.eval_score.toFixed(2)}`;
+    ep.style.color=data.eval_score>=4?'var(--ai)':'var(--warn)';
+  }
+}
+
+// 중립 검사
+function updateNeutralityPanel(nr) {
+  const p = document.getElementById('neutralityPanel');
+  if (!nr) { p.innerHTML = '<div class="empty-note">중립 검사 데이터 없음</div>'; return; }
+  const score = nr.score ?? '-';
+  const passed = nr.passed !== false;
+  const regen  = nr.regen_triggered;
+  const dir    = nr.bias_direction || 'none';
+  const viols  = nr.violations || [];
+  const color  = score >= 4 ? 'var(--ai)' : score >= 3 ? 'var(--warn)' : 'var(--danger)';
+  const icon   = regen ? '🔴 재생성 트리거' : passed ? (score < 4 ? '🟡 경고 통과' : '🟢 통과') : '🔴 실패';
+  const dirLabel = dir === 'toward_f' ? '여성 쪽 편향' : dir === 'toward_m' ? '남성 쪽 편향' : '편향 없음';
+  const violHtml = viols.length
+    ? '<ul style="margin:4px 0 0 12px;font-size:10px;color:var(--text2);">'+viols.map(v=>`<li>${esc(v)}</li>`).join('')+'</ul>'
+    : '';
+  p.innerHTML = `
+    <div class="bullet-card ${passed?(score<4?'mistrust':'none'):'reactive'}">
+      <div class="bullet-type ${passed?(score<4?'bt-mistrust':'bt-none'):'bt-reactive'}">${icon}</div>
+      <div style="font-size:11px;margin-top:4px;">
+        점수 <strong style="color:${color};font-family:'JetBrains Mono',monospace;">${score}/5</strong>
+        &nbsp;|&nbsp; ${esc(dirLabel)}
+      </div>
+      ${violHtml}
+    </div>`;
+}
+
+// 감성 분석
+function renderEmotionBlock(data, label){
+  if(!data) return `<div class="empty-note">${label}: 없음</div>`;
+  const cats=data.category||[], dets=data.detail||[];
+  let h=`<div class="emotion-block"><div class="emotion-label">${label} <span>대분류</span></div>`;
+  cats.forEach(c=>{h+=`<div class="emotion-row"><div class="emotion-name">${esc(c.label)}</div><div class="emotion-bar-wrap"><div class="emotion-bar cat" style="width:${Math.round(c.score*100)}%"></div></div><div class="emotion-score">${(c.score*100).toFixed(0)}%</div></div>`;});
+  h+=`<div class="emotion-label" style="margin-top:5px;">${label} <span>소분류</span></div>`;
+  dets.forEach(d=>{h+=`<div class="emotion-row"><div class="emotion-name">${esc(d.label)}</div><div class="emotion-bar-wrap"><div class="emotion-bar det" style="width:${Math.round(d.score*100)}%"></div></div><div class="emotion-score">${(d.score*100).toFixed(0)}%</div></div>`;});
+  h+=`</div>`;
+  return h;
+}
+function updateEmotionPanel(data){
+  const p=document.getElementById('emotionPanel');
+  if(!data.f_emotion&&!data.m_emotion){p.innerHTML='<div class="empty-note">감성 데이터 없음</div>';return;}
+  p.innerHTML=renderEmotionBlock(data.f_emotion,'여성')+'<hr style="border:none;border-top:1px solid var(--border);margin:7px 0;">'+renderEmotionBlock(data.m_emotion,'남성');
+}
+
+// 총알잡기
+function updateBulletPanel(data){
+  const p=document.getElementById('bulletPanel');
+  const det=data.bullet_detected, type=(data.bullet_type||'None').toLowerCase();
+  const cardCls=det?(type==='reactive'?'reactive':'mistrust'):'none';
+  const typeCls=det?(type==='reactive'?'bt-reactive':'bt-mistrust'):'bt-none';
+  const icon=det?(type==='reactive'?'🔴':'🟡'):'🟢';
+  const typeLabel=det?(type==='reactive'?'Reactive — 비난·공격 감지':'Mistrust — 혼란·불신 감지'):'감지 없음';
+  const desc=det?(type==='reactive'?'직접적 비난·공격 언어 감지. AI가 총알잡기 개입 적용.':'변화에 대한 혼란·불신 감지. AI가 부드러운 타당화 적용.'):'이번 라운드 총알이 감지되지 않았습니다.';
+  p.innerHTML=`<div class="bullet-card ${cardCls}"><div class="bullet-type ${typeCls}">${icon} ${esc(typeLabel)}</div><div style="font-size:11px;color:var(--text2);margin-top:3px;">${esc(desc)}</div></div>`;
+}
+
+// 위험 키워드
+function updateRiskPanel(data){
+  const p=document.getElementById('riskPanel');
+  const flag=data.risk_flag, cat=data.risk_category||'', kws=data.risk_keywords||[];
+  if(!flag){
+    p.innerHTML=`<div class="risk-card"><div style="font-size:11px;color:var(--ai);font-weight:500;">✓ 위험 키워드 없음</div><div style="font-size:10px;color:var(--muted);margin-top:3px;line-height:1.6;">감지: 자해·자살·폭행·스토킹·데이트폭력<br>하드코딩 기반 (LLM 없이 즉시 감지)</div></div>`;
+    document.getElementById('riskBadge').classList.add('hidden');
+  } else {
+    const kwH=kws.map(k=>`<span class="risk-kw">${esc(k)}</span>`).join('');
+    p.innerHTML=`<div class="risk-card on"><div style="font-size:12px;font-weight:700;color:var(--danger);">🚨 위험 감지: ${esc(cat)}</div><div style="font-size:11px;color:var(--text2);margin-top:3px;">상담이 중단되었습니다. 전문 기관 연계 필요.</div>${kws.length?`<div class="risk-kw-list">${kwH}</div>`:''}</div>`;
+    document.getElementById('riskBadge').classList.remove('hidden');
+  }
+}
+
+// Self-Refine 평가
+const EVAL_LABELS={neutrality:'중립성',validation_depth:'타당화 깊이',attach_coherence:'애착 정합성',cycle_reframing:'사이클 재구성',actionability:'행동 가능성',safety:'안전성'};
+function evalColor(v){return v>=4.5?'#43a047':v>=4?'#66bb6a':v>=3?'#fb8c00':'#e53935';}
+function updateEvalPanel(scores){
+  const p=document.getElementById('evalPanel');
+  if(!scores){p.innerHTML='<div class="empty-note">평가 데이터 없음</div>';return;}
+  let h='';
+  Object.entries(EVAL_LABELS).forEach(([k,label])=>{
+    const v=scores[k]||0, pct=(v/5)*100, color=evalColor(v);
+    h+=`<div class="eval-row"><div class="eval-name">${label}</div><div class="eval-bw"><div class="eval-bar" style="width:${pct}%;background:${color};"></div></div><div class="eval-score">${v}</div></div>`;
+  });
+  const avg=scores.weighted_avg;
+  if(avg!=null){
+    h+=`<div class="eval-avg" style="color:${evalColor(avg)};">가중평균 ${avg.toFixed(2)} / 5.0</div>`;
+    if(scores.improvement_hints){
+      h+=`<div style="font-size:10px;color:var(--muted);margin-top:5px;line-height:1.6;padding:6px;background:#f9f9f9;border:1px solid var(--border);border-radius:4px;">${esc(scores.improvement_hints)}</div>`;
+    }
+  }
+  p.innerHTML=h;
+}
+
+// EFT 신호
+const SIG_LABELS={emotion:'1차 감정 어휘',patternAware:'패턴 인식',otherSide:'상대 이면',relationConcern:'관계 걱정',vulnerability:'취약성 표현',empathy:'상대 연민',recoveryWill:'회복 의지',newComm:'새 소통 시도'};
+function updateSignalPanel(sig){
+  const p=document.getElementById('signalPanel');
+  if(!sig){p.innerHTML='<div class="empty-note">신호 데이터 없음</div>';return;}
+  const f=sig.f||{}, m=sig.m||{};
+  let h=`<div style="font-size:10px;color:var(--muted);margin-bottom:5px;">🔴 <span style="color:var(--female);font-weight:500;">여성</span> &nbsp; 🔵 <span style="color:var(--male);font-weight:500;">남성</span></div><div class="sig-grid">`;
+  Object.entries(SIG_LABELS).forEach(([k,label])=>{
+    const cls=(f[k]||m[k])?'on':'';
+    h+=`<div class="sig-item ${cls}" title="${label}">${f[k]?'🔴':'○'} ${m[k]?'🔵':'○'} ${label}</div>`;
+  });
+  h+='</div>';
+  p.innerHTML=h;
+}
+
+// API
+async function api(method,path,body){
+  const url=document.getElementById('serverUrl').value+path;
+  log('req',`${method} ${path}`+(body?' '+JSON.stringify(body).slice(0,80)+'...':''));
+  setDot('busy');
+  try{
+    const res=await fetch(url,{method,headers:{'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined});
+    const data=await res.json();
+    if(!res.ok) throw new Error(data.detail||res.statusText);
+    log('res',`${res.status} <- ${JSON.stringify(data).slice(0,120)}...`);
+    setDot('ok');
+    return data;
+  }catch(e){log('err',`오류: ${e.message}`);setDot('err');throw e;}
+}
+
+// 세션 생성
+async function createSession(){
+  const sid=document.getElementById('sessionId').value.trim();
+  if(!sid) return alert('Session ID를 입력하세요.');
+  try{
+    const data=await api('POST','/counseling/session',{
+      session_id:sid,
+      f_anxiety:parseFloat(document.getElementById('fAnxiety').value),
+      f_avoidance:parseFloat(document.getElementById('fAvoidance').value),
+      f_mbti:document.getElementById('fMbti').value.toUpperCase(),
+      m_anxiety:parseFloat(document.getElementById('mAnxiety').value),
+      m_avoidance:parseFloat(document.getElementById('mAvoidance').value),
+      m_mbti:document.getElementById('mMbti').value.toUpperCase(),
+    });
+    STATE.sessionId=sid; STATE.roundNum=0; STATE.eftStage=1;
+    document.getElementById('sessionBadge').textContent=sid;
+    document.getElementById('sessionBadge').className='badge live';
+    document.getElementById('sendBtn').disabled=false;
+    const info=document.getElementById('sessionInfo');
+    info.classList.remove('hidden');
+    info.innerHTML=`<span class="fc">여성</span> 불안 ${document.getElementById('fAnxiety').value} / 회피 ${document.getElementById('fAvoidance').value}<br><span class="mc">남성</span> 불안 ${document.getElementById('mAnxiety').value} / 회피 ${document.getElementById('mAvoidance').value}<br><strong>${data.classification||'분류 중'}</strong>${data.ipv_risk_flag?'<br><span class="dc">⚠ IPV 위험 결합</span>':''}`;
+    addSys(`세션 생성됨: ${sid}\n분류: ${data.classification||'-'}`);
+    updatePills({eft_stage:1,stage_progress:0});
+  }catch(e){}
+}
+
+// 라운드 전송
+async function sendRound(){
+  if(!STATE.sessionId) return alert('세션을 먼저 생성하세요.');
+  if(STATE.busy) return;
+  const fReply=document.getElementById('fReply').value.trim();
+  const mReply=document.getElementById('mReply').value.trim();
+  if(!fReply||!mReply) return alert('양측 발화를 모두 입력하세요.');
+  STATE.busy=true;
+  document.getElementById('sendBtn').disabled=true;
+  document.getElementById('sendBtn').textContent='생성 중...';
+  addMsg('f','user-f',`여성 발화 R${STATE.roundNum+1}`,fReply);
+  addMsg('m','user-m',`남성 발화 R${STATE.roundNum+1}`,mReply);
+  document.getElementById('fReply').value='';
+  document.getElementById('mReply').value='';
+  updateCharCount();
+  try{
+    const data=await api('POST','/counseling/round',{session_id:STATE.sessionId,f_reply:fReply,m_reply:mReply});
+    STATE.roundNum++; STATE.eftStage=data.eft_stage;
+    updateEmotionPanel(data);
+    updateBulletPanel(data);
+    updateRiskPanel(data);
+    updateNeutralityPanel(data.neutrality_result);
+    updateEvalPanel(data.eval_scores);
+    if(data.signals_state) updateSignalPanel(data.signals_state);
+    if(data.risk_flag){
+      addMsg('f','danger','🚨 RISK ALERT',data.f_message);
+      addMsg('m','danger','🚨 RISK ALERT',data.m_message);
+      addSys(`위험 감지: ${data.risk_category}`);
+      updatePills(data); return;
+    }
+    addMsg('f','ai',`AI → 여성 R${STATE.roundNum}`,data.f_message);
+    addMsg('m','ai',`AI → 남성 R${STATE.roundNum}`,data.m_message);
+    updatePills(data);
+    if(data.needs_cycle_definition){addSys('사이클 정의 절차 필요');showCycleExplore();}
+  }catch(e){addMsg('f','warning','ERROR',e.message);addMsg('m','warning','ERROR',e.message);}
+  finally{STATE.busy=false;document.getElementById('sendBtn').disabled=false;document.getElementById('sendBtn').textContent='전송 (Ctrl+↵)';}
+}
+
+function updateCharCount(){
+  const f=document.getElementById('fReply').value.length, m=document.getElementById('mReply').value.length;
+  const el=document.getElementById('charCount');
+  if(f>0||m>0){el.textContent=`여성 ${f}/500자 / 남성 ${m}/500자`;el.style.color=(f>450||m>450)?'var(--danger)':'var(--muted)';}
+  else el.textContent='';
+}
+document.getElementById('fReply').addEventListener('input',updateCharCount);
+document.getElementById('mReply').addEventListener('input',updateCharCount);
+
+// 사이클
+async function triggerCycle(){if(!STATE.sessionId)return alert('세션 없음');showCycleExplore();}
+async function showCycleExplore(){
+  try{
+    const data=await api('POST','/counseling/cycle',{session_id:STATE.sessionId,f_agreed:false,m_agreed:false});
+    document.getElementById('cycleBox').classList.remove('hidden');
+    document.getElementById('cycleDef').textContent=`[여성 탐색 질문]\n${data.f_question}\n\n[남성 탐색 질문]\n${data.m_question}`;
+    document.getElementById('cycleAgreeBtns').classList.add('hidden');
+    document.getElementById('cycleExploreBtns').classList.remove('hidden');
+    addMsg('f','system','사이클 탐색',data.f_question);
+    addMsg('m','system','사이클 탐색',data.m_question);
+  }catch(e){}
+}
+async function generateCycleDef(){
+  try{
+    const data=await api('POST','/counseling/cycle',{session_id:STATE.sessionId,f_agreed:false,m_agreed:false});
+    document.getElementById('cycleDef').textContent=data.cycle_definition;
+    document.getElementById('cycleAgreeBtns').classList.remove('hidden');
+    document.getElementById('cycleExploreBtns').classList.add('hidden');
+    addSys('사이클 정의 완료 — 양측 동의 후 2단계 진입');
+  }catch(e){}
+}
+async function agreeAllCycle(){
+  try{
+    await api('POST','/counseling/cycle',{session_id:STATE.sessionId,f_agreed:true,m_agreed:true});
+    STATE.eftStage=2;
+    document.getElementById('cycleBox').classList.add('hidden');
+    addSys('사이클 동의 완료 → 2단계 진입');
+    updatePills({eft_stage:2,stage_progress:0});
+  }catch(e){}
+}
+function hideCycleBox(){document.getElementById('cycleBox').classList.add('hidden');}
+
+// 보고서
+async function triggerReport(){
+  if(!STATE.sessionId) return alert('세션 없음');
+  addSys('보고서 생성 중...');
+  try{
+    const data=await api('POST','/counseling/report',{session_id:STATE.sessionId});
+    const w=window.open('','_blank','width=900,height=700');
+    w.document.write(`<html><head><meta charset="UTF-8"><style>body{font-family:sans-serif;font-size:13px;line-height:1.8;padding:30px;max-width:820px;margin:0 auto;background:#fafafa;}h2{margin-bottom:14px;}.tab{display:inline-block;padding:6px 16px;cursor:pointer;border-bottom:2px solid transparent;font-weight:500;}.tab.on{border-bottom-color:#1976d2;color:#1976d2;}.panel{display:none;}.panel.show{display:block;}pre{white-space:pre-wrap;word-break:break-word;background:#fff;padding:20px;border:1px solid #e0e0e0;border-radius:6px;}</style></head><body><h2>최종 보고서</h2><div><span class="tab on" onclick="sw('f',this)">여성 보고서</span><span class="tab" onclick="sw('m',this)">남성 보고서</span></div><div class="panel show" id="pf"><pre>${escR(data.f_report)}</pre></div><div class="panel" id="pm"><pre>${escR(data.m_report)}</pre></div><script>function escR(s){return s;}function sw(id,el){document.querySelectorAll('.tab').forEach(t=>t.classList.remove('on'));document.querySelectorAll('.panel').forEach(p=>p.classList.remove('show'));el.classList.add('on');document.getElementById('p'+id).classList.add('show');}<\/script></body></html>`);
+    addSys('보고서 생성 완료');
+  }catch(e){}
+}
+function escR(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+
+// 세션 삭제
+async function deleteSession(){
+  if(!STATE.sessionId) return;
+  if(!confirm('세션을 삭제하시겠습니까?')) return;
+  try{
+    await api('DELETE',`/counseling/session/${STATE.sessionId}`);
+    STATE.sessionId=null;
+    document.getElementById('sessionBadge').textContent='세션 없음';
+    document.getElementById('sessionBadge').className='badge';
+    document.getElementById('sendBtn').disabled=true;
+    document.getElementById('sessionInfo').classList.add('hidden');
+    document.getElementById('riskBadge').classList.add('hidden');
+    addSys('세션 삭제됨');
+    updatePills({eft_stage:1,stage_progress:0});
+  }catch(e){}
+}
+
+// 예시
+const EXAMPLES=[
+  ["왜 연락을 안 해줘? 나 무시하는 거야?","바빴어. 왜 그렇게 예민하게 굴어."],
+  ["그냥 내가 없어도 되는 것 같아서 슬퍼.","그런 거 아닌데. 그냥 쉬고 싶었어."],
+  ["버림받는 것 같아서 너무 무서워.","나도 더 망칠까봐 겁나서 조용히 있었어."],
+  ["당신이 돌아서면 나는 완전히 혼자인 것 같아.","나도 실망시키는 게 싫어서 거리를 뒀어."],
+];
+let exIdx=0;
+function fillExample(){
+  const ex=EXAMPLES[exIdx%EXAMPLES.length];
+  document.getElementById('fReply').value=ex[0];
+  document.getElementById('mReply').value=ex[1];
+  updateCharCount(); exIdx++;
+}
+document.addEventListener('keydown',e=>{if(e.ctrlKey&&e.key==='Enter')sendRound();});
+setDot('');
+updatePills({eft_stage:1,stage_progress:0});
+log('inf','바느질 AI 테스트 클라이언트 준비됨 / Ctrl+Enter = 전송');
+</script>
+</body>
+</html>

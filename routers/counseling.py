@@ -189,6 +189,7 @@ async def counseling_round(req: CounselingRoundRequest):
             eft_stage     = sess["eft_stage"],
             risk_flag     = True,
             risk_category = result.get("risk_category", ""),
+            risk_keywords = result.get("risk_keywords_found", []),
         )
 
     eval_scores  = result.get("eval_scores") or {}
@@ -204,6 +205,8 @@ async def counseling_round(req: CounselingRoundRequest):
         "regen_triggered": nr.get("regen_triggered", False),
     } if nr else None
 
+    updated_signals = result.get("signals", signals)
+
     return CounselingRoundResponse(
         session_id              = req.session_id,
         f_message               = f_resp,
@@ -212,8 +215,14 @@ async def counseling_round(req: CounselingRoundRequest):
         needs_cycle_definition  = result.get("needs_cycle_definition", False),
         stage_progress          = result.get("stage_progress", 0),
         bullet_detected         = result.get("bullet_detected", False),
+        bullet_type             = result.get("bullet_type", "None"),
         eval_score              = weighted_avg,
+        eval_scores             = eval_scores or None,
         neutrality_result       = neutrality_for_spring,
+        f_emotion               = result.get("f_emotion_data"),
+        m_emotion               = result.get("m_emotion_data"),
+        signals_state           = _signals_to_dict(updated_signals),
+        risk_keywords           = result.get("risk_keywords_found", []),
     )
 
 

@@ -39,8 +39,14 @@ class CounselingRoundResponse(BaseModel):
     # 디버깅/로깅용 (Spring이 저장해두면 유용)
     stage_progress:    int   = 0
     bullet_detected:   bool  = False
+    bullet_type:       str   = "None"           # "Reactive" / "Mistrust" / "None"
     eval_score:        Optional[float] = None
-    neutrality_result: Optional[dict]  = None  # score, bias_direction, passed, regen_triggered
+    eval_scores:       Optional[dict]  = None   # 세부 점수 (neutrality, validation_depth, ...)
+    neutrality_result: Optional[dict]  = None   # score, bias_direction, passed, regen_triggered
+    f_emotion:         Optional[dict]  = None   # KoELECTRA 여성 감성 분석 결과
+    m_emotion:         Optional[dict]  = None   # KoELECTRA 남성 감성 분석 결과
+    signals_state:     Optional[dict]  = None   # EFT 진행 신호 {f:{...}, m:{...}}
+    risk_keywords:     list            = []      # 감지된 위험 키워드
 
 
 class CycleExploreResponse(BaseModel):
