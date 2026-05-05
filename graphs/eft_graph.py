@@ -1,0 +1,741 @@
+# ============================================================
+# graphs/eft_graph.py
+# 상담 AI — LangGraph 상태 그래프 (핵심)
+#
+# 노드 순서:
+# risk_gate → bullet_detector → emotion_inject → eft_stage_router
+# → response_generator → self_refine → stage_transition_check
+#
+# 특징:
+# - f+m 동시 입력 → f+m 동시 출력 (asyncio.gather 병렬)
+# - 단계 후퇴 없음 (1→2: 사이클 동의, 2→3: 신호 기반, 3 종료: 양측 동의)
+# - risk_gate 하드코딩 키워드 기반
+# - 총알잡기: bullet_detector 노드가 감지 → response_generator에 컨텍스트 주입
+# - KoELECTRA 결과: emotion_inject 노드에서 EmotionService 직접 임포트
+# - DSPy Phase 2 대비: _call_llm() 인터페이스로 LLM 호출 추상화
+# ============================================================
+
+import asyncio
+import json
+import re
+from typing import Any, Optional, Annotated
+from typing_extensions import TypedDict
+
+from langgraph.graph import StateGraph, END
+from langgraph.graph.message import add_messages
+from services.llm import call_llm, call_llm_with_history
+
+from config.settings import (
+    MODEL_NAME, EVAL_MODEL_NAME,
+    MAX_OUTPUT_TOKENS, EVAL_MAX_TOKENS, BULLET_MAX_TOKENS,
+    MAX_REFINE,
+    EVAL_WEIGHTS, EVAL_PASS_SCORE, SAFETY_GATE_SCORE,
+    BULLET_DETECTION_ENABLED, BULLET_THRESHOLD,
+    RISK_DETECTION_THRESHOLD, RISK_DETECTION_THRESHOLD_IPV,
+    MIN_STAGE_ROUNDS,
+    NEUTRALITY_PASS_SCORE,
+)
+from config.attachment_weight import CoupleProfile
+from config.prompts.eft_base import (
+    build_system_prompt, build_user_message,
+    build_cycle_explore_prompt, build_cycle_definition_prompt,
+)
+from config.prompts.stage_prompts import (
+    SignalState, build_stage_instruction, build_eval_prompt,
+    build_bullet_detect_prompt, STAGE1_SIGNALS,
+)
+
+
+# ── 위험 키워드 하드코딩 ──────────────────────────────────
+# risk_gate는 LLM 없이 순수 키워드 매칭 (반드시 하드코딩)
+_RISK_KEYWORDS_HARD = {
+    "자해": ["자해", "손목", "긋"],
+    "자살": ["자살", "죽고 싶", "죽고싶", "뛰어내리", "목매", "극단적 선택"],
+    "폭행": ["때리", "죽이", "폭행", "칼로", "협박", "죽여"],
+    "스토킹": ["스토킹", "신상", "감금", "따라다"],
+    "데이트폭력": ["강제로", "강간", "성폭"],
+}
+
+
+# ── LangGraph State 정의 ──────────────────────────────────
+class EFTState(TypedDict):
+    # 세션 고정
+    session_id:          str
+    couple_profile:      Any          # CoupleProfile 객체
+
+    # 설정 (모두 변수화)
+    model_name:          str
+    max_output_tokens:   int
+    max_refine:          int
+    bullet_enabled:      bool
+    bullet_threshold:    float
+    emotion_weight:      float
+
+    # 현재 입력 (양측 동시)
+    f_reply:             str
+    m_reply:             str
+    round_num:           int
+
+    # 히스토리
+    f_history:           list[dict]   # [{"role": "user"|"assistant", "content": str}]
+    m_history:           list[dict]
+
+    # EFT 상태
+    eft_stage:           int           # 1 / 2 / 3
+    eft_step:            int           # 1~9
+    stage_rounds:        dict[int, int] # {1: n, 2: n, 3: n}
+    stage_progress:      int           # 0~100
+    prev_eft_stage:      int
+    signals:             Any           # SignalState
+    cycle_definition:    str
+    cycle_agreed:        dict[str, bool]  # {"f": bool, "m": bool}
+    end_agreed:          dict[str, bool]  # {"f": bool, "m": bool}
+    cycle_round:         int           # 사이클 탐색 라운드 (1 또는 2)
+    needs_cycle_definition: bool
+
+    # KoELECTRA 감성 분석 결과
+    f_emotion_data:      Optional[dict]
+    m_emotion_data:      Optional[dict]
+
+    # 총알잡기
+    bullet_detected:     bool
+    bullet_type:         str           # "Reactive" / "Mistrust" / "None"
+    bullet_target:       str           # "f" / "m" / ""
+    bullet_intervention: str
+
+    # 생성 응답
+    f_response:          str
+    m_response:          str
+
+    # Self-Refine
+    refine_count:        int
+    eval_scores:         dict
+    refine_feedback:     str           # 미달 척도 + 개선 방향
+
+    # 중립 검사 결과
+    neutrality_result:   Optional[dict]  # run_neutrality_check 반환값
+    neutrality_warning:  str             # 다음 라운드 warning_hint
+
+    # 위험 신호
+    risk_flag:           bool
+    risk_category:       str
+    risk_keywords_found: list[str]
+
+    # 단계 전환 플래그
+    stage_transition_flag: bool
+    next_stage:          int
+
+    # 사이클 정의 모드 플래그
+    cycle_mode:          str           # "" / "explore_f" / "explore_m" / "define"
+
+
+# Phase 2에서 DSPy Module.forward()로 교체 시 services/llm.py만 수정
+_call_llm              = call_llm
+_call_llm_with_history = call_llm_with_history
+
+
+# ================================================================
+# 노드 1: risk_gate — 하드코딩 위험 키워드 감지
+# LLM 없이 순수 키워드 매칭. 위험 감지 시 즉시 END.
+# ================================================================
+def node_risk_gate(state: EFTState) -> EFTState:
+    f_reply = state.get("f_reply", "")
+    m_reply = state.get("m_reply", "")
+    combined = f_reply + " " + m_reply
+
+    ipv_risk = state["couple_profile"].ipv_risk_flag
+    threshold = RISK_DETECTION_THRESHOLD_IPV if ipv_risk else RISK_DETECTION_THRESHOLD
+
+    found_keywords = []
+    risk_category  = ""
+
+    for category, keywords in _RISK_KEYWORDS_HARD.items():
+        for kw in keywords:
+            if kw in combined:
+                found_keywords.append(kw)
+                risk_category = category
+
+    # IPV 위험 결합에서 추가 데이트폭력 키워드 확장
+    if ipv_risk:
+        extra_ipv = ["무서워", "두려워", "겁나", "맞아", "맞았", "밀쳐"]
+        for kw in extra_ipv:
+            if kw in combined:
+                found_keywords.append(kw)
+                if not risk_category:
+                    risk_category = "데이트폭력_의심"
+
+    risk_flag = len(found_keywords) > 0
+
+    return {
+        **state,
+        "risk_flag":          risk_flag,
+        "risk_category":      risk_category,
+        "risk_keywords_found": found_keywords,
+    }
+
+
+def edge_risk_gate(state: EFTState) -> str:
+    return "END" if state["risk_flag"] else "bullet_detector"
+
+
+# ================================================================
+# 노드 2: bullet_detector — 총알잡기 감지
+# LLM으로 Reactive / Mistrust 분류. 설정으로 ON/OFF 가능.
+# ================================================================
+async def node_bullet_detector(state: EFTState) -> EFTState:
+    if not state.get("bullet_enabled", BULLET_DETECTION_ENABLED):
+        return {**state, "bullet_detected": False, "bullet_type": "None", "bullet_target": ""}
+
+    f_reply = state.get("f_reply", "")
+    m_reply = state.get("m_reply", "")
+
+    # 양측 동시 감지
+    f_prompt = build_bullet_detect_prompt(True,  state["eft_stage"], f_reply)
+    m_prompt = build_bullet_detect_prompt(False, state["eft_stage"], m_reply)
+
+    f_result_raw, m_result_raw = await asyncio.gather(
+        _call_llm("", f_prompt, model=EVAL_MODEL_NAME, max_tokens=BULLET_MAX_TOKENS),
+        _call_llm("", m_prompt, model=EVAL_MODEL_NAME, max_tokens=BULLET_MAX_TOKENS),
+    )
+
+    def _parse_bullet(raw: str) -> dict:
+        try:
+            clean = raw.replace("```json", "").replace("```", "").strip()
+            return json.loads(clean)
+        except Exception:
+            return {"bullet_detected": False, "bullet_type": "None", "confidence": 0.0,
+                    "reason": "", "suggested_intervention": ""}
+
+    f_res = _parse_bullet(f_result_raw)
+    m_res = _parse_bullet(m_result_raw)
+
+    threshold = state.get("bullet_threshold", BULLET_THRESHOLD)
+
+    # 임계값 이상의 신뢰도만 총알로 판정
+    f_bullet = f_res.get("bullet_detected", False) and f_res.get("confidence", 0) >= threshold
+    m_bullet = m_res.get("bullet_detected", False) and m_res.get("confidence", 0) >= threshold
+
+    bullet_detected   = f_bullet or m_bullet
+    bullet_type       = (f_res if f_bullet else m_res).get("bullet_type", "None") if bullet_detected else "None"
+    bullet_target     = ("f" if f_bullet else "m") if bullet_detected else ""
+    bullet_intervention = (f_res if f_bullet else m_res).get("suggested_intervention", "") if bullet_detected else ""
+
+    return {
+        **state,
+        "bullet_detected":    bullet_detected,
+        "bullet_type":        bullet_type,
+        "bullet_target":      bullet_target,
+        "bullet_intervention": bullet_intervention,
+    }
+
+
+# ================================================================
+# 노드 3: emotion_inject — KoELECTRA 감성 분석 결과 State 주입
+# EmotionService 직접 임포트 (별도 HTTP 호출 없음)
+# ================================================================
+async def node_emotion_inject(state: EFTState) -> EFTState:
+    try:
+        from services.emotion_service import EmotionService
+        service = EmotionService()
+        cp = state["couple_profile"]
+        loop = asyncio.get_running_loop()
+
+        f_result, m_result = await asyncio.gather(
+            loop.run_in_executor(
+                None, lambda: service.analyze(
+                    text=state["f_reply"],
+                    gender="여성",
+                    situation=cp.f_situation[:20] if cp.f_situation else "연애",
+                )
+            ),
+            loop.run_in_executor(
+                None, lambda: service.analyze(
+                    text=state["m_reply"],
+                    gender="남성",
+                    situation=cp.m_situation[:20] if cp.m_situation else "연애",
+                )
+            ),
+        )
+        return {**state, "f_emotion_data": f_result, "m_emotion_data": m_result}
+    except Exception as e:
+        # KoELECTRA 서비스 실패 시 None으로 graceful fallback (상담 중단 없음)
+        print(f"[emotion_inject] KoELECTRA 호출 실패: {e}")
+        return {**state, "f_emotion_data": None, "m_emotion_data": None}
+
+
+def _format_emotion_context(emotion_data: Optional[dict], label: str) -> str:
+    """KoELECTRA 결과를 프롬프트 삽입용 텍스트로 변환"""
+    if not emotion_data:
+        return ""
+    cats = emotion_data.get("category", [])
+    dets = emotion_data.get("detail", [])
+    cat_str = " / ".join(f"{c['label']}({c['score']:.2f})" for c in cats[:2]) if cats else "미확인"
+    det_str = " / ".join(f"{d['label']}({d['score']:.2f})" for d in dets[:3]) if dets else "미확인"
+    return f"{label}: 대분류 {cat_str} | 소분류 {det_str}"
+
+
+# ================================================================
+# 노드 4: eft_stage_router — EFT 단계/스텝 결정
+# 현재 상태 기반으로 stage_instruction 조립
+# ================================================================
+def node_eft_stage_router(state: EFTState) -> EFTState:
+    # stage_rounds 업데이트 (라운드 시작 시 현재 단계 카운트 증가)
+    stage_rounds = dict(state.get("stage_rounds", {1: 0, 2: 0, 3: 0}))
+    stage        = state["eft_stage"]
+    stage_rounds[stage] = stage_rounds.get(stage, 0) + 1
+
+    return {
+        **state,
+        "stage_rounds": stage_rounds,
+    }
+
+
+# ================================================================
+# 노드 5: response_generator — f+m 동시 생성 (핵심)
+# asyncio.gather로 병렬 GPT 호출 → 편향 방지
+# ================================================================
+async def node_response_generator(state: EFTState) -> EFTState:
+    cp         = state["couple_profile"]
+    stage      = state["eft_stage"]
+    signals    = state.get("signals") or SignalState()
+    round_num  = state.get("round_num", 1)
+    is_stage_first = stage != state.get("prev_eft_stage", stage)
+
+    # 총알잡기 컨텍스트
+    bullet_context = ""
+    if state.get("bullet_detected"):
+        bullet_context = (
+            f"총알 유형: {state.get('bullet_type')} | 발화자: {state.get('bullet_target')} | "
+            f"권장 개입: {state.get('bullet_intervention')}\n"
+            "→ 총알잡기 5단계 프로토콜을 적용하라. "
+            "공격적 발화를 즉각 타당화(Closed Validation)하고 대화를 부드럽게 재구성하라. "
+            "단, 상대방을 비난하거나 정당화하지 마라."
+        )
+
+    # KoELECTRA 감성 컨텍스트
+    emotion_context = ""
+    f_em = _format_emotion_context(state.get("f_emotion_data"), "여성")
+    m_em = _format_emotion_context(state.get("m_emotion_data"), "남성")
+    if f_em or m_em:
+        emotion_context = "\n".join(filter(None, [f_em, m_em]))
+
+    # 시스템 프롬프트 (내담자별)
+    f_sys = build_system_prompt(
+        is_female      = True,
+        couple_profile = cp,
+        eft_stage      = stage,
+        stage_progress = state.get("stage_progress", 0),
+        bullet_context = bullet_context,
+        emotion_context= emotion_context,
+    )
+    m_sys = build_system_prompt(
+        is_female      = False,
+        couple_profile = cp,
+        eft_stage      = stage,
+        stage_progress = state.get("stage_progress", 0),
+        bullet_context = bullet_context,
+        emotion_context= emotion_context,
+    )
+
+    # 단계 지침
+    f_stage_instruction = build_stage_instruction(True,  stage, signals)
+    m_stage_instruction = build_stage_instruction(False, stage, signals)
+
+    # 파트너 마지막 발화
+    f_hist = state.get("f_history", [])
+    m_hist = state.get("m_history", [])
+    last_m_reply = next((h["content"] for h in reversed(m_hist) if h["role"] == "user"), "")
+    last_f_reply = next((h["content"] for h in reversed(f_hist) if h["role"] == "user"), "")
+
+    # refine 피드백 있으면 stage_instruction에 추가
+    refine_fb = state.get("refine_feedback", "")
+    neutrality_fb = ""
+    # neutrality_result에서 재생성 피드백 + warning 반영
+    nr = state.get("neutrality_result")
+    if nr and not nr.get("passed"):
+        neutrality_fb = nr.get("feedback_for_regen", "")
+    warning_hint = state.get("neutrality_warning", "")
+
+    if refine_fb or neutrality_fb or warning_hint:
+        extra = "\n".join(filter(None, [refine_fb, neutrality_fb, warning_hint]))
+        f_stage_instruction += f"\n\n{extra}"
+        m_stage_instruction += f"\n\n{extra}"
+
+    # 유저 메시지
+    f_user_msg = build_user_message(
+        is_female           = True,
+        round_num           = round_num,
+        is_stage_first      = is_stage_first,
+        partner_last_reply  = last_m_reply,
+        stage_instruction   = f_stage_instruction,
+    )
+    m_user_msg = build_user_message(
+        is_female           = False,
+        round_num           = round_num,
+        is_stage_first      = is_stage_first,
+        partner_last_reply  = last_f_reply,
+        stage_instruction   = m_stage_instruction,
+    )
+
+    # 병렬 GPT 호출 (편향 방지 핵심)
+    f_resp, m_resp = await asyncio.gather(
+        _call_llm_with_history(f_sys, f_hist, f_user_msg,
+                               model=state.get("model_name", MODEL_NAME),
+                               max_tokens=state.get("max_output_tokens", MAX_OUTPUT_TOKENS)),
+        _call_llm_with_history(m_sys, m_hist, m_user_msg,
+                               model=state.get("model_name", MODEL_NAME),
+                               max_tokens=state.get("max_output_tokens", MAX_OUTPUT_TOKENS)),
+    )
+
+    return {
+        **state,
+        "f_response":    f_resp,
+        "m_response":    m_resp,
+        "refine_feedback": "",   # 피드백 초기화
+    }
+
+
+# ================================================================
+# 노드 5.5: neutrality_check — 중립성 검사
+# response_generator 직후, self_refine 직전 실행
+# ================================================================
+async def node_neutrality_check(state: EFTState) -> EFTState:
+    """
+    중립 검사 AI 호출.
+    fail 시 refine_feedback에 교정 지침 추가 → response_generator 재실행.
+    pass + warning 시 warning_hint 저장 → 다음 라운드 프롬프트에 반영.
+    """
+    from graphs.neutrality_graph import run_neutrality_check
+
+    try:
+        result = await run_neutrality_check(
+            f_reply        = state["f_reply"],
+            m_reply        = state["m_reply"],
+            f_response     = state["f_response"],
+            m_response     = state["m_response"],
+            couple_profile = state["couple_profile"],
+            eft_stage      = state["eft_stage"],
+        )
+    except Exception as e:
+        print(f"[neutrality_check] 오류 — 통과 처리: {e}")
+        result = {
+            "score": 5.0, "bias_direction": "none", "violations": [],
+            "reasoning": "", "passed": True, "regen_triggered": False,
+            "warning_hint": "", "feedback_for_regen": "",
+        }
+
+    refine_feedback = state.get("refine_feedback", "")
+    if result["regen_triggered"]:
+        refine_feedback = result["feedback_for_regen"]
+
+    return {
+        **state,
+        "neutrality_result":  result,
+        "neutrality_warning": result.get("warning_hint", ""),
+        "refine_feedback":    refine_feedback,
+    }
+
+
+def edge_neutrality_check(state: EFTState) -> str:
+    """중립 검사 실패 시 response_generator로 루프백"""
+    nr = state.get("neutrality_result", {})
+    refine_count = state.get("refine_count", 0)
+    max_refine   = state.get("max_refine", MAX_REFINE)
+
+    if nr.get("regen_triggered") and refine_count < max_refine:
+        return "response_generator"
+    return "self_refine"
+
+
+# ================================================================
+# 노드 6: self_refine — 6개 척도 채점 + 재생성 루프
+# ================================================================
+_REFINE_EVAL_SYSTEM = """너는 EFT 커플 상담 응답 품질 평가 전문가다. 아래 기준에 따라 6개 척도를 채점하고 JSON만 출력하라."""
+
+async def node_self_refine(state: EFTState) -> EFTState:
+    f_resp    = state.get("f_response", "")
+    m_resp    = state.get("m_response", "")
+    f_reply   = state.get("f_reply", "")
+    m_reply   = state.get("m_reply", "")
+    cp        = state["couple_profile"]
+
+    eval_prompt = f"""[평가 대상]
+여성 내담자 발화: {f_reply}
+남성 내담자 발화: {m_reply}
+AI → 여성 응답: {f_resp}
+AI → 남성 응답: {m_resp}
+
+[커플 정보]
+결합 분류: {cp.classification}
+여성 유형: {cp.f_profile.attach_type} / 남성 유형: {cp.m_profile.attach_type}
+EFT 단계: {state['eft_stage']}단계
+
+[6개 척도 채점 기준]
+1. neutrality (구조적 중립성, 가중치 20%): 양측에 공평한가? 한쪽을 편드는가?
+2. validation_depth (정서 타당화 깊이, 20%): 1차 정서까지 도달했는가?
+3. attach_coherence (애착 패턴 정합성, 20%): 32분류 + ECR-R 개입 전략이 반영됐는가?
+4. cycle_reframing (사이클 재구조화, 15%): 갈등을 사이클 프레임으로 제시했는가?
+5. actionability (행동 가능성, 15%): 구체적이고 실행 가능한 다음 단계가 있는가?
+6. safety (안전성, 10%): 위험 신호 처리가 적절한가? 폭력/학대 정상화가 없는가?
+
+각 척도 1~5점으로 채점. JSON만 출력:
+{{"neutrality": 점수, "validation_depth": 점수, "attach_coherence": 점수, "cycle_reframing": 점수, "actionability": 점수, "safety": 점수, "improvement_hints": "가중평균 미달 척도들에 대한 개선 방향 한 문장"}}"""
+
+    raw = await _call_llm(_REFINE_EVAL_SYSTEM, eval_prompt,
+                          model=EVAL_MODEL_NAME, max_tokens=EVAL_MAX_TOKENS)
+
+    try:
+        clean = raw.replace("```json", "").replace("```", "").strip()
+        scores = json.loads(clean)
+    except Exception:
+        scores = {k: 4.0 for k in EVAL_WEIGHTS}
+        scores["improvement_hints"] = ""
+
+    # 가중 평균
+    weighted_avg = sum(
+        scores.get(k, 3.0) * w for k, w in EVAL_WEIGHTS.items()
+    )
+    scores["weighted_avg"] = round(weighted_avg, 3)
+
+    refine_count = state.get("refine_count", 0)
+
+    # 재생성 조건
+    safety_fail  = scores.get("safety", 5.0) < SAFETY_GATE_SCORE
+    quality_fail = weighted_avg < EVAL_PASS_SCORE and refine_count < state.get("max_refine", MAX_REFINE)
+
+    if safety_fail or quality_fail:
+        hints = scores.get("improvement_hints", "")
+        failed = [k for k, v in scores.items()
+                  if k in EVAL_WEIGHTS and v < EVAL_PASS_SCORE]
+        feedback = (
+            f"[재생성 요청 — 미달 척도: {', '.join(failed)}]\n"
+            f"개선 방향: {hints}"
+        )
+        return {
+            **state,
+            "eval_scores":    scores,
+            "refine_count":   refine_count + 1,
+            "refine_feedback": feedback,
+        }
+
+    # 통과
+    return {
+        **state,
+        "eval_scores":     scores,
+        "refine_feedback": "",
+    }
+
+
+def edge_self_refine(state: EFTState) -> str:
+    """재생성 여부 결정"""
+    feedback = state.get("refine_feedback", "")
+    if feedback:
+        return "response_generator"
+    return "stage_transition_check"
+
+
+# ================================================================
+# 노드 7: stage_transition_check — 단계 전환 신호 감지
+# EFT 진행도 평가 GPT 호출 → signals 누적 업데이트
+# ================================================================
+async def node_stage_transition_check(state: EFTState) -> EFTState:
+    cp        = state["couple_profile"]
+    signals   = state.get("signals") or SignalState()
+    stage     = state["eft_stage"]
+    round_num = state.get("round_num", 1)
+
+    # 히스토리 요약 (최근 250자씩)
+    f_hist = state.get("f_history", [])
+    m_hist = state.get("m_history", [])
+    f_summary = "\n".join(
+        f"[여성-{'내담자' if h['role']=='user' else 'AI'}{i+1}] {h['content'][:250]}"
+        for i, h in enumerate(f_hist)
+    )
+    m_summary = "\n".join(
+        f"[남성-{'내담자' if h['role']=='user' else 'AI'}{i+1}] {h['content'][:250]}"
+        for i, h in enumerate(m_hist)
+    )
+
+    eval_prompt = build_eval_prompt(
+        eft_stage         = stage,
+        stage_rounds      = state.get("stage_rounds", {}),
+        signals           = signals,
+        couple_combo      = cp.classification,
+        f_type            = cp.f_profile.attach_type,
+        f_anxiety         = cp.f_profile.anxiety_score,
+        f_avoidance       = cp.f_profile.avoidance_score,
+        m_type            = cp.m_profile.attach_type,
+        m_anxiety         = cp.m_profile.anxiety_score,
+        m_avoidance       = cp.m_profile.avoidance_score,
+        round_num         = round_num,
+        f_history_summary = f_summary,
+        m_history_summary = m_summary,
+    )
+
+    raw = await _call_llm("", eval_prompt, model=EVAL_MODEL_NAME, max_tokens=EVAL_MAX_TOKENS)
+
+    try:
+        clean = raw.replace("```json", "").replace("```", "").strip()
+        result = json.loads(clean)
+    except Exception:
+        result = {"stage": stage, "progress": 0, "f_signals": {}, "m_signals": {}}
+
+    # 신호 누적 (한 번 True된 신호는 False로 돌아가지 않음)
+    if result.get("f_signals"):
+        signals.merge("f", result["f_signals"])
+    if result.get("m_signals"):
+        signals.merge("m", result["m_signals"])
+
+    # 단계 후퇴 없음 보장
+    new_stage = max(stage, min(3, result.get("stage", stage)))
+    # 1→2 전진은 사이클 동의 절차가 처리, 여기서는 막음
+    if new_stage == 2 and stage == 1:
+        new_stage = 1
+    # 2→3: MIN_STAGE_ROUNDS 미충족 시 차단
+    stage_rounds = state.get("stage_rounds", {})
+    if new_stage > stage and stage_rounds.get(stage, 0) < MIN_STAGE_ROUNDS:
+        new_stage = stage
+
+    # 1단계 사이클 동의 필요 여부
+    needs_cycle = False
+    if new_stage == 1 and not state.get("cycle_definition"):
+        keys1 = STAGE1_SIGNALS
+        if (any(signals.f[k] for k in keys1) and any(signals.m[k] for k in keys1)):
+            needs_cycle = True
+
+    stage_changed = new_stage != stage
+    prev_stage    = stage
+
+    return {
+        **state,
+        "eft_stage":              new_stage,
+        "prev_eft_stage":         prev_stage,
+        "stage_progress":         result.get("progress", state.get("stage_progress", 0)),
+        "signals":                signals,
+        "stage_transition_flag":  stage_changed,
+        "next_stage":             new_stage if stage_changed else 0,
+        "needs_cycle_definition": needs_cycle,
+    }
+
+
+# ================================================================
+# 그래프 조립
+# ================================================================
+def build_eft_graph() -> StateGraph:
+    graph = StateGraph(EFTState)
+
+    # 노드 등록
+    graph.add_node("risk_gate",              node_risk_gate)
+    graph.add_node("bullet_detector",        node_bullet_detector)
+    graph.add_node("emotion_inject",         node_emotion_inject)
+    graph.add_node("eft_stage_router",       node_eft_stage_router)
+    graph.add_node("response_generator",     node_response_generator)
+    graph.add_node("neutrality_check",       node_neutrality_check)   # ← 신규
+    graph.add_node("self_refine",            node_self_refine)
+    graph.add_node("stage_transition_check", node_stage_transition_check)
+
+    # 엣지 연결
+    graph.set_entry_point("risk_gate")
+    graph.add_conditional_edges("risk_gate", edge_risk_gate, {
+        "END":             END,
+        "bullet_detector": "bullet_detector",
+    })
+    graph.add_edge("bullet_detector",    "emotion_inject")
+    graph.add_edge("emotion_inject",     "eft_stage_router")
+    graph.add_edge("eft_stage_router",   "response_generator")
+    graph.add_edge("response_generator", "neutrality_check")           # ← 변경
+    graph.add_conditional_edges("neutrality_check", edge_neutrality_check, {
+        "response_generator": "response_generator",                    # ← 재생성 루프
+        "self_refine":        "self_refine",
+    })
+    graph.add_conditional_edges("self_refine", edge_self_refine, {
+        "response_generator":     "response_generator",
+        "stage_transition_check": "stage_transition_check",
+    })
+    graph.add_edge("stage_transition_check", END)
+
+    return graph.compile()
+
+
+# 싱글턴 그래프 인스턴스
+_eft_graph = None
+
+def get_eft_graph():
+    global _eft_graph
+    if _eft_graph is None:
+        _eft_graph = build_eft_graph()
+    return _eft_graph
+
+
+# ================================================================
+# State 초기화 헬퍼
+# ================================================================
+def create_initial_state(
+    session_id:     str,
+    couple_profile: CoupleProfile,
+    f_reply:        str,
+    m_reply:        str,
+    f_history:      list[dict] = None,
+    m_history:      list[dict] = None,
+    eft_stage:      int = 1,
+    stage_rounds:   dict = None,
+    stage_progress: int = 0,
+    signals:        SignalState = None,
+    cycle_definition: str = "",
+    cycle_agreed:   dict = None,
+    end_agreed:     dict = None,
+    round_num:      int = 1,
+    # 설정 오버라이드 (모두 변수화)
+    model_name:     str = None,
+    max_output_tokens: int = None,
+    max_refine:     int = None,
+    bullet_enabled: bool = None,
+    bullet_threshold: float = None,
+    emotion_weight: float = None,
+) -> EFTState:
+    from config.settings import EMOTION_WEIGHT
+    return EFTState(
+        session_id          = session_id,
+        couple_profile      = couple_profile,
+        model_name          = model_name or MODEL_NAME,
+        max_output_tokens   = max_output_tokens or MAX_OUTPUT_TOKENS,
+        max_refine          = max_refine or MAX_REFINE,
+        bullet_enabled      = bullet_enabled if bullet_enabled is not None else BULLET_DETECTION_ENABLED,
+        bullet_threshold    = bullet_threshold or BULLET_THRESHOLD,
+        emotion_weight      = emotion_weight or EMOTION_WEIGHT,
+        f_reply             = f_reply,
+        m_reply             = m_reply,
+        round_num           = round_num,
+        f_history           = f_history or [],
+        m_history           = m_history or [],
+        eft_stage           = eft_stage,
+        eft_step            = 1,
+        stage_rounds        = stage_rounds or {1: 0, 2: 0, 3: 0},
+        stage_progress      = stage_progress,
+        prev_eft_stage      = eft_stage,
+        signals             = signals or SignalState(),
+        cycle_definition    = cycle_definition,
+        cycle_agreed        = cycle_agreed or {"f": False, "m": False},
+        end_agreed          = end_agreed or {"f": False, "m": False},
+        cycle_round         = 0,
+        needs_cycle_definition = False,
+        f_emotion_data      = None,
+        m_emotion_data      = None,
+        bullet_detected     = False,
+        bullet_type         = "None",
+        bullet_target       = "",
+        bullet_intervention = "",
+        f_response          = "",
+        m_response          = "",
+        refine_count        = 0,
+        eval_scores         = {},
+        refine_feedback     = "",
+        neutrality_result   = None,
+        neutrality_warning  = "",
+        risk_flag           = False,
+        risk_category       = "",
+        risk_keywords_found = [],
+        stage_transition_flag = False,
+        next_stage          = 0,
+        cycle_mode          = "",
+    )
