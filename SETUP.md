@@ -16,17 +16,10 @@ GitHub에는 용량 문제로 아래 파일들이 올라가 있지 않다. **별
 
 ### 2. 환경 변수 파일 (필수)
 
-루트에 `.env` 파일 생성 (아래 내용 참고):
+`.env` 파일은 레포에 포함되어 있다. `OPENAI_API_KEY` 값만 본인 키로 교체하면 된다.
 
 ```
-OPENAI_API_KEY=sk-...
-```
-
-나머지 변수는 기본값이 있어 생략 가능. 필요 시 추가:
-
-```
-MODEL_NAME=gpt-4o
-EVAL_MODEL_NAME=gpt-4o-mini
+OPENAI_API_KEY=sk-...   ← 여기만 변경
 ```
 
 ---
@@ -125,7 +118,7 @@ curl http://localhost:8000/emotion/health
 
 ```
 banuzil-ai-server/
-├── .env                              ✅ 직접 생성
+├── .env                              ✅ 레포에 포함 — OPENAI_API_KEY만 교체
 ├── models/
 │   ├── unweighted/
 │   │   ├── best_model.pt             ✅ 별도 전달
