@@ -18,6 +18,12 @@ build/
 # 학습 체크포인트 (중간 결과물)
 *_checkpoints/
 
+# 실험용 모델 변형 (프로덕션: unweighted, low_weight만 사용)
+models/weighted/
+models/weighted_v2/
+models/low_weight_v2/
+models/unweighted_v2/
+
 # 전처리된 데이터 (재생성 가능)
 data/processed/
 
