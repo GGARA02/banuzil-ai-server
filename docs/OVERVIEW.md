@@ -104,7 +104,8 @@ banuzil-ai-server/
 └── docs/
     ├── OVERVIEW.md                  # 이 파일
     ├── API_SPEC.md                  # Spring 연동용 API 명세서
-    └── SETUP.md                     # 설치 및 실행 가이드
+    ├── SETUP.md                     # 설치 및 실행 가이드
+    └── CODE_ANALYSIS.md             # 핵심 코드 분석
 ```
 
 ---
