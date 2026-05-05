@@ -33,7 +33,7 @@ Python 3.10 이상 권장.
 ### 패키지 설치
 
 ```bash
-pip install -r requirements.txt
+python -m pip install -r requirements.txt
 ```
 
 PyTorch는 GPU 환경이면 [pytorch.org](https://pytorch.org/get-started/locally/)에서 CUDA 버전 별도 설치 권장.  
