@@ -44,7 +44,7 @@ CPU만 있어도 동작하지만 감성 분석 속도가 느려진다.
 ## 서버 실행
 
 ```bash
-uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+python -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
 정상 실행 시 출력:
