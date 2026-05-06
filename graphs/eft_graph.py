@@ -42,7 +42,7 @@ from config.prompts.eft_base import (
 )
 from config.prompts.stage_prompts import (
     SignalState, build_stage_instruction, build_eval_prompt,
-    build_bullet_detect_prompt, STAGE1_SIGNALS,
+    STAGE1_SIGNALS,
 )
 
 
@@ -179,45 +179,35 @@ def edge_risk_gate(state: EFTState) -> str:
 
 
 # ================================================================
-# 노드 2: bullet_detector — 총알잡기 감지
-# LLM으로 Reactive / Mistrust 분류. 설정으로 ON/OFF 가능.
+# 노드 2: bullet_detector — 총알잡기 감지 (DSPy)
+# BulletDetector.forward() 동기 호출을 run_in_executor로 병렬 실행.
+# 설정으로 ON/OFF 가능.
 # ================================================================
 async def node_bullet_detector(state: EFTState) -> EFTState:
     if not state.get("bullet_enabled", BULLET_DETECTION_ENABLED):
         return {**state, "bullet_detected": False, "bullet_type": "None", "bullet_target": ""}
 
-    f_reply = state.get("f_reply", "")
-    m_reply = state.get("m_reply", "")
-
-    # 양측 동시 감지
-    f_prompt = build_bullet_detect_prompt(True,  state["eft_stage"], f_reply)
-    m_prompt = build_bullet_detect_prompt(False, state["eft_stage"], m_reply)
-
-    f_result_raw, m_result_raw = await asyncio.gather(
-        _call_llm("", f_prompt, model=EVAL_MODEL_NAME, max_tokens=BULLET_MAX_TOKENS),
-        _call_llm("", m_prompt, model=EVAL_MODEL_NAME, max_tokens=BULLET_MAX_TOKENS),
-    )
-
-    def _parse_bullet(raw: str) -> dict:
-        try:
-            clean = raw.replace("```json", "").replace("```", "").strip()
-            return json.loads(clean)
-        except Exception:
-            return {"bullet_detected": False, "bullet_type": "None", "confidence": 0.0,
-                    "reason": "", "suggested_intervention": ""}
-
-    f_res = _parse_bullet(f_result_raw)
-    m_res = _parse_bullet(m_result_raw)
-
+    from services.dspy_modules.bullet_module import get_bullet_detector
+    detector  = get_bullet_detector()
+    f_reply   = state.get("f_reply", "")
+    m_reply   = state.get("m_reply", "")
+    eft_stage = state["eft_stage"]
     threshold = state.get("bullet_threshold", BULLET_THRESHOLD)
+    loop      = asyncio.get_running_loop()
+
+    # DSPy Predict는 동기 → run_in_executor로 병렬 실행
+    f_res, m_res = await asyncio.gather(
+        loop.run_in_executor(None, lambda: detector.forward(f_reply, eft_stage, True)),
+        loop.run_in_executor(None, lambda: detector.forward(m_reply, eft_stage, False)),
+    )
 
     # 임계값 이상의 신뢰도만 총알로 판정
     f_bullet = f_res.get("bullet_detected", False) and f_res.get("confidence", 0) >= threshold
     m_bullet = m_res.get("bullet_detected", False) and m_res.get("confidence", 0) >= threshold
 
-    bullet_detected   = f_bullet or m_bullet
-    bullet_type       = (f_res if f_bullet else m_res).get("bullet_type", "None") if bullet_detected else "None"
-    bullet_target     = ("f" if f_bullet else "m") if bullet_detected else ""
+    bullet_detected     = f_bullet or m_bullet
+    bullet_type         = (f_res if f_bullet else m_res).get("bullet_type", "None") if bullet_detected else "None"
+    bullet_target       = ("f" if f_bullet else "m") if bullet_detected else ""
     bullet_intervention = (f_res if f_bullet else m_res).get("suggested_intervention", "") if bullet_detected else ""
 
     return {
