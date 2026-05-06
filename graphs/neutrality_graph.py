@@ -3,28 +3,22 @@
 # 중립 검사 AI — LangGraph (2노드)
 #
 # 노드:
-#   llm_judge  → GPT-4.5-mini로 채점 JSON 출력
+#   llm_judge  → DSPy NeutralityJudge로 채점
 #   verdict    → pass/fail 판정 + 피드백 패키징 (LLM 없음)
 #
 # 위치: eft_graph.py 내 response_generator → self_refine 사이
 # 입력: 이번 라운드 발화 + 응답 + couple_profile (히스토리 없음)
 # 출력: neutrality_result dict → EFTState에 저장
-#
-# Phase 2: node_llm_judge 내부 _call_llm만 DSPy로 교체
 # ============================================================
 
-import json
 import asyncio
 from typing import Any, Optional
 from typing_extensions import TypedDict
 
 from config.settings import (
-    NEUTRALITY_MODEL, NEUTRALITY_MAX_TOKENS,
     NEUTRALITY_PASS_SCORE, NEUTRALITY_WARN_SCORE,
 )
 from config.attachment_weight import CoupleProfile
-from config.prompts.neutrality_check import build_neutrality_prompt
-from services.llm import call_llm
 
 
 # ── NeutralityState ───────────────────────────────────────
@@ -48,48 +42,36 @@ class NeutralityState(TypedDict):
     regen_triggered:     bool
 
 
-# ── 노드 1: llm_judge ─────────────────────────────────────
+# ── 노드 1: llm_judge (DSPy) ──────────────────────────────
 async def node_llm_judge(state: NeutralityState) -> NeutralityState:
     """
-    GPT-4.5-mini로 중립성 채점.
-    Phase 2에서 이 함수 내부만 DSPy NeutralityScorer로 교체.
+    DSPy NeutralityJudge로 중립성 채점.
+    동기 forward()를 run_in_executor로 래핑해 비동기 호환 유지.
     """
-    prompt = build_neutrality_prompt(
-        f_reply        = state["f_reply"],
-        m_reply        = state["m_reply"],
-        f_response     = state["f_response"],
-        m_response     = state["m_response"],
-        couple_profile = state["couple_profile"],
-        eft_stage      = state["eft_stage"],
-    )
+    from services.dspy_modules.neutrality_module import get_neutrality_judge
+    judge = get_neutrality_judge()
+    cp    = state["couple_profile"]
+    loop  = asyncio.get_running_loop()
 
-    raw = await call_llm(
-        system_prompt = "당신은 커플 상담 AI 응답의 중립성을 채점하는 검증자입니다. JSON만 출력하세요.",
-        user_message  = prompt,
-        model         = NEUTRALITY_MODEL,
-        max_tokens    = NEUTRALITY_MAX_TOKENS,
+    result = await loop.run_in_executor(
+        None,
+        lambda: judge.forward(
+            f_reply        = state["f_reply"],
+            m_reply        = state["m_reply"],
+            f_response     = state["f_response"],
+            m_response     = state["m_response"],
+            classification = cp.classification,
+            eft_stage      = state["eft_stage"],
+        )
     )
-
-    try:
-        clean = raw.replace("```json", "").replace("```", "").strip()
-        result = json.loads(clean)
-    except Exception:
-        # 파싱 실패 시 통과 처리 (상담 중단 방지)
-        result = {
-            "neutrality_score":   4,
-            "bias_direction":     "none",
-            "violations":         [],
-            "reasoning":          "채점 파싱 실패 — 기본값 통과 처리",
-            "feedback_for_regen": "",
-        }
 
     return {
         **state,
-        "neutrality_score":   float(result.get("neutrality_score", 4)),
-        "bias_direction":     result.get("bias_direction", "none"),
-        "violations":         result.get("violations", []),
-        "reasoning":          result.get("reasoning", ""),
-        "feedback_for_regen": result.get("feedback_for_regen", ""),
+        "neutrality_score":   result["neutrality_score"],
+        "bias_direction":     result["bias_direction"],
+        "violations":         result["violations"],
+        "reasoning":          result["reasoning"],
+        "feedback_for_regen": result["feedback_for_regen"],
     }
 
 
