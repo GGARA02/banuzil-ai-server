@@ -131,22 +131,23 @@ def edge_risk_gate(state) -> str:
 
 ---
 
-### 2-3. 노드 2: `node_bullet_detector` — 총알잡기
+### 2-3. 노드 2: `node_bullet_detector` — 총알잡기 (DSPy)
 
 ```python
 async def node_bullet_detector(state):
     if not state.get("bullet_enabled"):
         return {**state, "bullet_detected": False, "bullet_type": "None"}
 
-    f_prompt = build_bullet_detect_prompt(True,  stage, f_reply)
-    m_prompt = build_bullet_detect_prompt(False, stage, m_reply)
+    from services.dspy_modules.bullet_module import get_bullet_detector
+    detector = get_bullet_detector()
+    loop = asyncio.get_running_loop()
 
-    # 여성/남성 동시 감지 (병렬)
-    f_result_raw, m_result_raw = await asyncio.gather(
-        _call_llm("", f_prompt, model=EVAL_MODEL_NAME, max_tokens=BULLET_MAX_TOKENS),
-        _call_llm("", m_prompt, model=EVAL_MODEL_NAME, max_tokens=BULLET_MAX_TOKENS),
+    # DSPy Predict는 동기 → run_in_executor로 병렬 실행
+    f_res, m_res = await asyncio.gather(
+        loop.run_in_executor(None, lambda: detector.forward(f_reply, eft_stage, True)),
+        loop.run_in_executor(None, lambda: detector.forward(m_reply, eft_stage, False)),
     )
-    # 파싱 후 threshold 이상 신뢰도만 총알로 판정
+    # threshold 이상 신뢰도만 총알로 판정
     f_bullet = f_res.get("bullet_detected") and f_res.get("confidence") >= threshold
     ...
 ```
@@ -157,7 +158,8 @@ async def node_bullet_detector(state):
 | `Reactive` | 즉각적 비난·공격 | 즉시 타당화(Closed Validation) 후 재구성 |
 | `Mistrust` | 불신·냉소적 거부 | 부드러운 공감 + 변화 두려움 인정 |
 
-감지 결과(`bullet_type`, `bullet_intervention`)는 State에 저장되고 `node_response_generator`에서 프롬프트에 주입된다.
+DSPy `BulletDetector.forward()` 반환값: `{bullet_detected:bool, bullet_type:str, confidence:float, suggested_intervention:str}`  
+결과는 State에 저장되고 `node_response_generator`에서 프롬프트에 주입된다.
 
 ---
 
@@ -220,15 +222,25 @@ async def node_response_generator(state):
 
 ---
 
-### 2-6. 노드 6: `node_self_refine` — 품질 평가 + 재생성
+### 2-6. 노드 6: `node_self_refine` — 품질 평가 + 재생성 (DSPy)
 
 ```python
 async def node_self_refine(state):
-    # 6개 척도 채점 (GPT-4o-mini)
-    scores = json.loads(await _call_llm(EVAL_SYSTEM, eval_prompt, ...))
+    from services.dspy_modules.eval_module import get_eft_evaluator
+    evaluator = get_eft_evaluator()
+    loop = asyncio.get_running_loop()
+
+    # DSPy EFTEvaluator (동기) → run_in_executor
+    scores = await loop.run_in_executor(None, lambda: evaluator.forward(
+        f_reply=..., m_reply=..., f_response=..., m_response=...,
+        classification=cp.classification,
+        f_attach_type=cp.f_profile.attach_type,
+        m_attach_type=cp.m_profile.attach_type,
+        eft_stage=state["eft_stage"],
+    ))
 
     # 가중 평균
-    weighted_avg = sum(scores[k] * w for k, w in EVAL_WEIGHTS.items())
+    weighted_avg = sum(scores.get(k, 3.0) * w for k, w in EVAL_WEIGHTS.items())
 
     # 재생성 조건
     if scores["safety"] < SAFETY_GATE_SCORE or weighted_avg < EVAL_PASS_SCORE:
@@ -255,12 +267,25 @@ def edge_self_refine(state) -> str:
 
 ---
 
-## 3. `graphs/neutrality_graph.py` — 중립성 검사
+## 3. `graphs/neutrality_graph.py` — 중립성 검사 (DSPy)
 
 ```python
+async def node_llm_judge(state):
+    from services.dspy_modules.neutrality_module import get_neutrality_judge
+    judge = get_neutrality_judge()
+    loop = asyncio.get_running_loop()
+
+    # DSPy NeutralityJudge (동기) → run_in_executor
+    result = await loop.run_in_executor(None, lambda: judge.forward(
+        f_reply=state["f_reply"], m_reply=state["m_reply"],
+        f_response=state["f_response"], m_response=state["m_response"],
+        classification=cp.classification, eft_stage=state["eft_stage"],
+    ))
+    return {**state, **result}
+
 async def run_neutrality_check(f_reply, m_reply, f_response, m_response, ...) -> dict:
     state = {...}
-    state = await node_llm_judge(state)   # GPT로 채점
+    state = await node_llm_judge(state)   # DSPy로 채점
     state = node_verdict(state)           # 점수 기반 pass/fail (LLM 없음)
     return {...}
 ```
@@ -341,3 +366,99 @@ POST /counseling/round
 ```
 
 **재생성 루프 상한:** `refine_count`가 `MAX_REFINE`(기본 3)에 도달하면 중립성 실패, 품질 미달 여부와 무관하게 현재 응답으로 통과한다. 무한 루프 방지.
+
+---
+
+## 6. `services/dspy_modules/` — DSPy 모듈
+
+### 왜 DSPy를 쓰는가
+
+| 기존 방식 | DSPy 방식 |
+|-----------|-----------|
+| `build_*_prompt()` 함수로 프롬프트 직접 작성 | `dspy.Signature`로 입출력 필드만 선언 |
+| `call_llm()` 후 `json.loads(raw)` | `dspy.Predict(Signature)` → 타입된 필드로 바로 접근 |
+| JSON 파싱 실패 시 예외 처리 코드 필요 | 내장 파싱 + 타입 검증 |
+| 데이터 쌓이면 프롬프트 수동 조정 | `dspy.Optimizer`로 자동 튜닝 가능 |
+
+**현재 상태:** 데이터가 없으므로 Optimizer 없이 기본 Predict만 사용한다. LLM이 Signature의 필드 설명을 보고 자동 생성한 프롬프트로 동작한다. 상담 데이터가 충분히 쌓이면 Optimizer를 붙여 자동 튜닝할 수 있다.
+
+### `services/dspy_modules/__init__.py` — LM 초기화
+
+```python
+def ensure_configured():
+    """DSPy LM 최초 1회 초기화 (싱글턴). 각 모듈이 import 시 호출."""
+    global _configured
+    if not _configured:
+        lm = dspy.LM(f"openai/{EVAL_MODEL_NAME}", temperature=TEMPERATURE, cache=False)
+        dspy.configure(lm=lm)
+        _configured = True
+```
+
+`cache=False`: 상담은 매번 다른 응답이 필요하므로 캐시 비활성화.
+
+### `bullet_module.py` — BulletDetect Signature
+
+```python
+class BulletDetect(dspy.Signature):
+    """EFT 커플 상담 중 내담자 발화에서 방어적·공격적 발화(총알)를 감지한다."""
+    reply: str    = dspy.InputField(desc="내담자 발화 텍스트")
+    eft_stage: int = dspy.InputField(desc="현재 EFT 단계 (1/2/3)")
+    is_female: bool = dspy.InputField(desc="True=여성 내담자, False=남성 내담자")
+
+    bullet_detected: bool  = dspy.OutputField(desc="총알 감지 여부")
+    bullet_type: str       = dspy.OutputField(desc="Reactive / Mistrust / None 중 하나만 출력")
+    confidence: float      = dspy.OutputField(desc="감지 신뢰도 0.0~1.0")
+    suggested_intervention: str = dspy.OutputField(desc="권장 개입 방식 한 문장 (한국어)")
+```
+
+`BulletDetector.forward()` 반환값: bullet_type은 `("Reactive", "Mistrust", "None")` 외의 값이면 `"None"`으로 보정. confidence는 0~1로 클램핑.
+
+### `eval_module.py` — EFTEval Signature
+
+```python
+class EFTEval(dspy.Signature):
+    """EFT 커플 상담 AI 응답의 품질을 6개 척도로 1~5점 채점한다."""
+    # 입력: f_reply, m_reply, f_response, m_response, classification,
+    #       f_attach_type, m_attach_type, eft_stage
+    neutrality: float       = dspy.OutputField(desc="중립성 점수 1~5")
+    validation_depth: float = dspy.OutputField(desc="타당화 깊이 점수 1~5")
+    attach_coherence: float = dspy.OutputField(desc="애착 정합성 점수 1~5")
+    cycle_reframing: float  = dspy.OutputField(desc="사이클 재구성 점수 1~5")
+    actionability: float    = dspy.OutputField(desc="행동 가능성 점수 1~5")
+    safety: float           = dspy.OutputField(desc="안전성 점수 1~5")
+    improvement_hints: str  = dspy.OutputField(desc="미달 척도 개선 방향 한 문장")
+```
+
+모든 점수는 `max(1.0, min(5.0, float(v)))` 클램핑. 파싱 실패 시 기본값 3.0.
+
+### `neutrality_module.py` — NeutralityCheck Signature
+
+```python
+class NeutralityCheck(dspy.Signature):
+    """EFT 커플 상담 AI 응답이 여성 또는 남성 중 한쪽에 편향됐는지 검사한다."""
+    # 입력: f_reply, m_reply, f_response, m_response, classification, eft_stage
+    neutrality_score: float  = dspy.OutputField(desc="중립성 점수 1~5")
+    bias_direction: str      = dspy.OutputField(desc="toward_f / toward_m / none")
+    violations: str          = dspy.OutputField(desc="감지된 편향 항목들을 ;로 구분")
+    reasoning: str           = dspy.OutputField(desc="판단 근거 한 문장 (한국어)")
+    feedback_for_regen: str  = dspy.OutputField(desc="재생성 시 교정 지침")
+```
+
+`violations` 문자열은 `NeutralityJudge.forward()`에서 `;` 분리 → 리스트로 변환해 반환.
+
+### Optimizer 연결 예시 (데이터 확보 후)
+
+```python
+# 학습 예시 데이터 준비
+examples = [
+    dspy.Example(
+        f_reply="...", m_reply="...", f_response="...", m_response="...",
+        classification="불안+거부회피", eft_stage=1,
+    ).with_inputs("f_reply", "m_reply", "f_response", "m_response", "classification", "eft_stage")
+]
+
+# BootstrapFewShot: 좋은 예시를 자동으로 few-shot 프롬프트에 삽입
+optimizer = dspy.BootstrapFewShot(metric=lambda ex, pred: pred.neutrality_score >= 4.0)
+optimized = optimizer.compile(NeutralityJudge(), trainset=examples)
+optimized.save("neutrality_optimized.json")
+```
