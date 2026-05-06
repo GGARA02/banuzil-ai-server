@@ -20,4 +20,4 @@ python-dotenv
 # psycopg2-binary
 
 # DSPy (Phase 2)
-# dspy-ai
+dspy-ai
