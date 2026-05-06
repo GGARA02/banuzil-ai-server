@@ -438,48 +438,28 @@ def edge_neutrality_check(state: EFTState) -> str:
 
 
 # ================================================================
-# 노드 6: self_refine — 6개 척도 채점 + 재생성 루프
+# 노드 6: self_refine — 6개 척도 채점 + 재생성 루프 (DSPy)
+# EFTEvaluator.forward() 동기 호출을 run_in_executor로 실행.
 # ================================================================
-_REFINE_EVAL_SYSTEM = """너는 EFT 커플 상담 응답 품질 평가 전문가다. 아래 기준에 따라 6개 척도를 채점하고 JSON만 출력하라."""
-
 async def node_self_refine(state: EFTState) -> EFTState:
-    f_resp    = state.get("f_response", "")
-    m_resp    = state.get("m_response", "")
-    f_reply   = state.get("f_reply", "")
-    m_reply   = state.get("m_reply", "")
+    from services.dspy_modules.eval_module import get_eft_evaluator
+    evaluator = get_eft_evaluator()
     cp        = state["couple_profile"]
+    loop      = asyncio.get_running_loop()
 
-    eval_prompt = f"""[평가 대상]
-여성 내담자 발화: {f_reply}
-남성 내담자 발화: {m_reply}
-AI → 여성 응답: {f_resp}
-AI → 남성 응답: {m_resp}
-
-[커플 정보]
-결합 분류: {cp.classification}
-여성 유형: {cp.f_profile.attach_type} / 남성 유형: {cp.m_profile.attach_type}
-EFT 단계: {state['eft_stage']}단계
-
-[6개 척도 채점 기준]
-1. neutrality (구조적 중립성, 가중치 20%): 양측에 공평한가? 한쪽을 편드는가?
-2. validation_depth (정서 타당화 깊이, 20%): 1차 정서까지 도달했는가?
-3. attach_coherence (애착 패턴 정합성, 20%): 32분류 + ECR-R 개입 전략이 반영됐는가?
-4. cycle_reframing (사이클 재구조화, 15%): 갈등을 사이클 프레임으로 제시했는가?
-5. actionability (행동 가능성, 15%): 구체적이고 실행 가능한 다음 단계가 있는가?
-6. safety (안전성, 10%): 위험 신호 처리가 적절한가? 폭력/학대 정상화가 없는가?
-
-각 척도 1~5점으로 채점. JSON만 출력:
-{{"neutrality": 점수, "validation_depth": 점수, "attach_coherence": 점수, "cycle_reframing": 점수, "actionability": 점수, "safety": 점수, "improvement_hints": "가중평균 미달 척도들에 대한 개선 방향 한 문장"}}"""
-
-    raw = await _call_llm(_REFINE_EVAL_SYSTEM, eval_prompt,
-                          model=EVAL_MODEL_NAME, max_tokens=EVAL_MAX_TOKENS)
-
-    try:
-        clean = raw.replace("```json", "").replace("```", "").strip()
-        scores = json.loads(clean)
-    except Exception:
-        scores = {k: 4.0 for k in EVAL_WEIGHTS}
-        scores["improvement_hints"] = ""
+    scores = await loop.run_in_executor(
+        None,
+        lambda: evaluator.forward(
+            f_reply       = state.get("f_reply", ""),
+            m_reply       = state.get("m_reply", ""),
+            f_response    = state.get("f_response", ""),
+            m_response    = state.get("m_response", ""),
+            classification= cp.classification,
+            f_attach_type = cp.f_profile.attach_type,
+            m_attach_type = cp.m_profile.attach_type,
+            eft_stage     = state["eft_stage"],
+        )
+    )
 
     # 가중 평균
     weighted_avg = sum(
@@ -494,7 +474,7 @@ EFT 단계: {state['eft_stage']}단계
     quality_fail = weighted_avg < EVAL_PASS_SCORE and refine_count < state.get("max_refine", MAX_REFINE)
 
     if safety_fail or quality_fail:
-        hints = scores.get("improvement_hints", "")
+        hints  = scores.get("improvement_hints", "")
         failed = [k for k, v in scores.items()
                   if k in EVAL_WEIGHTS and v < EVAL_PASS_SCORE]
         feedback = (
@@ -503,8 +483,8 @@ EFT 단계: {state['eft_stage']}단계
         )
         return {
             **state,
-            "eval_scores":    scores,
-            "refine_count":   refine_count + 1,
+            "eval_scores":     scores,
+            "refine_count":    refine_count + 1,
             "refine_feedback": feedback,
         }
 
