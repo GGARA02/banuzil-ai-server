@@ -432,7 +432,6 @@ KoELECTRA 파인튜닝 스크립트. **서버 실행과 무관** — 모델 학�
 | `MAX_OUTPUT_TOKENS` | `800` | 상담 응답 최대 토큰 |
 | `REPORT_MAX_TOKENS` | `3000` | 최종 보고서 최대 토큰 |
 | `EVAL_MAX_TOKENS` | `600` | EFT 진행 평가 최대 토큰 |
-| `BULLET_MAX_TOKENS` | `300` | 총알잡기 감지 최대 토큰 (DSPy 내부 참조용, settings.py에 보존) |
 
 ### 애착 분류 컷오프
 | 변수 | 기본값 | 설명 |

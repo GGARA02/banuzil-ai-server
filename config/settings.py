@@ -19,7 +19,6 @@ MAX_INPUT_CHARS:   int   = int(os.getenv("MAX_INPUT_CHARS",  "500"))   # 내담�
 MAX_OUTPUT_TOKENS: int   = int(os.getenv("MAX_OUTPUT_TOKENS","800"))   # 상담 응답 최대 토큰
 REPORT_MAX_TOKENS: int   = int(os.getenv("REPORT_MAX_TOKENS","3000"))  # 최종 보고서 최대 토큰
 EVAL_MAX_TOKENS:   int   = int(os.getenv("EVAL_MAX_TOKENS",  "600"))   # EFT 진행 평가 최대 토큰
-BULLET_MAX_TOKENS: int   = int(os.getenv("BULLET_MAX_TOKENS","300"))   # 총알잡기 감지 최대 토큰
 
 # ── ECR-R 애착 가중치 구간 컷오프 ─────────────────────────
 # 김성현(2004) 한국판 컷오프: 불안 2.61 / 회피 2.33
@@ -54,10 +53,8 @@ EVAL_PASS_SCORE:   float = float(os.getenv("EVAL_PASS_SCORE",   "4.0"))  # 가�
 SAFETY_GATE_SCORE: float = float(os.getenv("SAFETY_GATE_SCORE", "3.0"))  # 안전성 게이팅 기준
 
 # ── 중립 검사 AI 설정 ─────────────────────────────────────
-NEUTRALITY_MODEL:       str   = os.getenv("NEUTRALITY_MODEL",       "gpt-4o-mini")
 NEUTRALITY_PASS_SCORE:  float = float(os.getenv("NEUTRALITY_PASS_SCORE",  "3.0"))
 NEUTRALITY_WARN_SCORE:  float = float(os.getenv("NEUTRALITY_WARN_SCORE",  "4.0"))
-NEUTRALITY_MAX_TOKENS:  int   = int(os.getenv("NEUTRALITY_MAX_TOKENS",    "400"))
 
 # ── EFT 단계 전환 설정 ────────────────────────────────────
 MIN_STAGE_ROUNDS: int = int(os.getenv("MIN_STAGE_ROUNDS","2"))   # 단계 전환 최소 누적 라운드

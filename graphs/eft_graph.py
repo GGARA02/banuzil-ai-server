@@ -17,7 +17,7 @@
 
 import asyncio
 import json
-from typing import Any, Optional, Annotated
+from typing import Any, Optional
 from typing_extensions import TypedDict
 
 from langgraph.graph import StateGraph, END

@@ -263,33 +263,3 @@ def build_eval_prompt(
 
 [남성 상담 기록]
 {m_history_summary}"""
-
-
-# ── 총알잡기 감지 프롬프트 ─────────────────────────────────
-def build_bullet_detect_prompt(
-    is_female: bool,
-    eft_stage: int,
-    reply: str,
-) -> str:
-    """발화에서 총알(Bullet) 유형 감지"""
-    speaker = "여성" if is_female else "남성"
-    return f"""너는 EFT 커플 상담 중 발생하는 방어적·공격적 발화(총알, Bullet)를 감지하는 분류기다. 아래 발화를 분석하여 JSON만 출력하라.
-
-[총알 유형 정의]
-- Reactive: 1단계 방어기제. 상대방 개인에게 비난·비판·공격. 감정이 격렬하고 직설적.
-- Mistrust: 2단계 방어기제. 상대의 새로운 모습에 혼란·불신. "적이 낯선 사람이 되는" 현상. 부드럽지만 저항적.
-- None: 총알 아님. 일반적 대화 또는 취약성 표현.
-
-[현재 상담 단계] {eft_stage}단계
-[발화자] {speaker}
-[발화 내용]
-{reply}
-
-출력 JSON:
-{{
-  "bullet_detected": true또는false,
-  "bullet_type": "Reactive" 또는 "Mistrust" 또는 "None",
-  "confidence": 0.0~1.0,
-  "reason": "한줄이유",
-  "suggested_intervention": "Politely Blocking / Closed Validation / Open Validation & Reframing / Parts Talk / Reality Check & Organizing 중 가장 적합한 개입 방식"
-}}"""
