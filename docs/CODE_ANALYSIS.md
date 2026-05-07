@@ -380,7 +380,7 @@ POST /counseling/round
 | JSON 파싱 실패 시 예외 처리 코드 필요 | 내장 파싱 + 타입 검증 |
 | 데이터 쌓이면 프롬프트 수동 조정 | `dspy.Optimizer`로 자동 튜닝 가능 |
 
-**현재 상태:** 데이터가 없으므로 Optimizer 없이 기본 Predict만 사용한다. LLM이 Signature의 필드 설명을 보고 자동 생성한 프롬프트로 동작한다. 상담 데이터가 충분히 쌓이면 Optimizer를 붙여 자동 튜닝할 수 있다.
+**현재 상태:** 데이터가 없으므로 **기존 프롬프트가 기본값으로 그대로 사용된다.** 각 모듈은 `is_optimized` 플래그로 분기하며, `dspy_optimized/` 폴더에 최적화 파일이 있을 때만 DSPy Predict로 전환된다. 파일이 없으면 기존 `build_*_prompt() → LLM → json.loads()` 흐름이 100% 동일하게 동작한다.
 
 ### `services/dspy_modules/__init__.py` — LM 초기화
 
@@ -460,5 +460,19 @@ examples = [
 # BootstrapFewShot: 좋은 예시를 자동으로 few-shot 프롬프트에 삽입
 optimizer = dspy.BootstrapFewShot(metric=lambda ex, pred: pred.neutrality_score >= 4.0)
 optimized = optimizer.compile(NeutralityJudge(), trainset=examples)
-optimized.save("neutrality_optimized.json")
+optimized.save("dspy_optimized/neutrality/v1.json")
 ```
+
+### 버전 관리
+
+```
+dspy_optimized/
+├── bullet/v1.json, v2.json, ...    ← 최신 버전 자동 로드
+├── eval/v1.json, ...
+└── neutrality/v1.json, ...
+```
+
+- 파일 없음 → 기존 프롬프트 사용 (현재 상태)
+- v1.json 추가 → DSPy 최적화 자동 전환
+- v2.json 추가 → 최신 버전 자동 로드 (v1 보존, 롤백 가능)
+- 전부 삭제 → 기존 프롬프트로 즉시 복귀

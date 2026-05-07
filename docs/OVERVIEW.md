@@ -76,7 +76,8 @@ banuzil-ai-server/
 │   └── prompts/
 │       ├── __init__.py
 │       ├── eft_base.py              # 시스템 프롬프트 / 유저 메시지 빌더
-│       └── stage_prompts.py         # EFT 단계별 지침 + 신호 평가 프롬프트
+│       ├── stage_prompts.py         # EFT 단계별 지침 + 신호 평가 프롬프트
+│       └── neutrality_check.py      # 중립성 검사 프롬프트 (DSPy 기본값)
 │
 ├── data/
 │   ├── raw/                         # 원본 학습 데이터 (xlsx)
@@ -92,6 +93,11 @@ banuzil-ai-server/
 │   ├── unweighted/                  # 감성 대분류 모델 (best_model.pt)
 │   ├── low_weight/                  # 감성 소분류 모델 (best_model.pt)
 │   └── weighted*/                   # 기타 실험 체크포인트
+│
+├── dspy_optimized/                  # DSPy 최적화 파일 (비어있으면 기존 프롬프트 사용)
+│   ├── bullet/                      # v1.json, v2.json, ... 자동 최신 로드
+│   ├── eval/
+│   └── neutrality/
 │
 ├── test_client.html                 # 브라우저 테스트 클라이언트 (http://localhost:8000/test)
 ├── .env                             # 환경 변수 (OPENAI_API_KEY만 교체)
