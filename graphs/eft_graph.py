@@ -12,22 +12,20 @@
 # - risk_gate 하드코딩 키워드 기반
 # - 총알잡기: bullet_detector 노드가 감지 → response_generator에 컨텍스트 주입
 # - KoELECTRA 결과: emotion_inject 노드에서 EmotionService 직접 임포트
-# - DSPy Phase 2 대비: _call_llm() 인터페이스로 LLM 호출 추상화
+# - bullet_detector/self_refine/neutrality_check: DSPy 모듈 사용
 # ============================================================
 
 import asyncio
 import json
-import re
 from typing import Any, Optional, Annotated
 from typing_extensions import TypedDict
 
 from langgraph.graph import StateGraph, END
-from langgraph.graph.message import add_messages
 from services.llm import call_llm, call_llm_with_history
 
 from config.settings import (
     MODEL_NAME, EVAL_MODEL_NAME,
-    MAX_OUTPUT_TOKENS, EVAL_MAX_TOKENS, BULLET_MAX_TOKENS,
+    MAX_OUTPUT_TOKENS, EVAL_MAX_TOKENS,
     MAX_REFINE,
     EVAL_WEIGHTS, EVAL_PASS_SCORE, SAFETY_GATE_SCORE,
     BULLET_DETECTION_ENABLED, BULLET_THRESHOLD,
@@ -129,7 +127,6 @@ class EFTState(TypedDict):
     cycle_mode:          str           # "" / "explore_f" / "explore_m" / "define"
 
 
-# Phase 2에서 DSPy Module.forward()로 교체 시 services/llm.py만 수정
 _call_llm              = call_llm
 _call_llm_with_history = call_llm_with_history
 

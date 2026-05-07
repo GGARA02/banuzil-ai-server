@@ -2,7 +2,6 @@
 # config/prompts/eft_base.py
 # EFT 상담 AI 기본 프롬프트 빌더
 # v12 HTML buildSystemPrompt() 완전 이식 + Python 서버 구조 반영
-# Phase 2에서 DSPy Module로 교체 예정 — _call_llm 인터페이스 유지
 # ============================================================
 
 from config.attachment_weight import (
