@@ -62,6 +62,7 @@ async def node_llm_judge(state: NeutralityState) -> NeutralityState:
             m_response     = state["m_response"],
             classification = cp.classification,
             eft_stage      = state["eft_stage"],
+            couple_profile = cp,  # 기본 프롬프트 모드에서 사용
         )
     )
 

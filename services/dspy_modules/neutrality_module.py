@@ -2,12 +2,19 @@
 # services/dspy_modules/neutrality_module.py
 # 중립성 검사 DSPy 모듈
 #
-# 기존: build_neutrality_prompt() → call_llm() → json.loads()
-# 현재: NeutralityCheck Signature → dspy.Predict → 타입된 출력
+# 기본: build_neutrality_prompt() → call_llm() → json.loads()
+# DSPy 최적화 파일 있으면: dspy.Predict(NeutralityCheck) → 타입된 출력
+#
+# 최적화 파일 위치: dspy_optimized/neutrality/v1.json, v2.json, ...
 # ============================================================
+
+import os
+from pathlib import Path
 
 import dspy
 from services.dspy_modules import ensure_configured
+
+_OPT_DIR = Path(os.path.dirname(__file__)).parent.parent / "dspy_optimized" / "neutrality"
 
 
 class NeutralityCheck(dspy.Signature):
@@ -48,6 +55,18 @@ class NeutralityJudge(dspy.Module):
     def __init__(self):
         ensure_configured()
         self.predict = dspy.Predict(NeutralityCheck)
+        self.is_optimized = False
+        self.version = "default"
+        self._load_latest()
+
+    def _load_latest(self):
+        if not _OPT_DIR.exists():
+            return
+        versions = sorted(_OPT_DIR.glob("v*.json"))
+        if versions:
+            self.load(str(versions[-1]))
+            self.is_optimized = True
+            self.version = versions[-1].stem
 
     def forward(
         self,
@@ -55,16 +74,69 @@ class NeutralityJudge(dspy.Module):
         f_response: str, m_response: str,
         classification: str,
         eft_stage: int,
+        couple_profile=None,  # _default_forward에서 사용
     ) -> dict:
+        if self.is_optimized:
+            return self._dspy_forward(
+                f_reply, m_reply, f_response, m_response,
+                classification, eft_stage,
+            )
+        return self._default_forward(
+            f_reply, m_reply, f_response, m_response,
+            eft_stage, couple_profile,
+        )
+
+    def _dspy_forward(self, f_reply, m_reply, f_response, m_response,
+                      classification, eft_stage):
+        """DSPy 최적화 버전"""
         result = self.predict(
-            f_reply=f_reply,
-            m_reply=m_reply,
-            f_response=f_response,
-            m_response=m_response,
+            f_reply=f_reply, m_reply=m_reply,
+            f_response=f_response, m_response=m_response,
             classification=classification,
             eft_stage=eft_stage,
         )
+        return self._to_dict(result)
 
+    def _default_forward(self, f_reply, m_reply, f_response, m_response,
+                         eft_stage, couple_profile):
+        """기본값 — 기존 프롬프트 + DSPy LM 직접 호출"""
+        from config.prompts.neutrality_check import build_neutrality_prompt
+        import json
+
+        prompt = build_neutrality_prompt(
+            f_reply=f_reply, m_reply=m_reply,
+            f_response=f_response, m_response=m_response,
+            couple_profile=couple_profile,
+            eft_stage=eft_stage,
+        )
+
+        system = "당신은 커플 상담 AI 응답의 중립성을 채점하는 검증자입니다. JSON만 출력하세요."
+        lm = dspy.settings.lm
+        raw_list = lm(f"{system}\n\n{prompt}")
+        raw = raw_list[0] if raw_list else ""
+
+        try:
+            clean = raw.replace("```json", "").replace("```", "").strip()
+            parsed = json.loads(clean)
+        except Exception:
+            parsed = {
+                "neutrality_score": 4, "bias_direction": "none",
+                "violations": [], "reasoning": "채점 파싱 실패 — 기본값 통과 처리",
+                "feedback_for_regen": "",
+            }
+
+        class _Result:
+            pass
+        r = _Result()
+        r.neutrality_score = parsed.get("neutrality_score", 4)
+        r.bias_direction = parsed.get("bias_direction", "none")
+        r.violations = ";".join(parsed.get("violations", []))
+        r.reasoning = parsed.get("reasoning", "")
+        r.feedback_for_regen = parsed.get("feedback_for_regen", "")
+        return self._to_dict(r)
+
+    def _to_dict(self, result):
+        """공통 검증 + dict 변환"""
         try:
             score = max(1.0, min(5.0, float(result.neutrality_score)))
         except (ValueError, TypeError):
@@ -74,9 +146,11 @@ class NeutralityJudge(dspy.Module):
         if direction not in ("toward_f", "toward_m", "none"):
             direction = "none"
 
-        # violations 문자열 → 리스트
         violations_raw = result.violations or ""
-        violations = [v.strip() for v in violations_raw.split(";") if v.strip()]
+        if isinstance(violations_raw, list):
+            violations = violations_raw
+        else:
+            violations = [v.strip() for v in violations_raw.split(";") if v.strip()]
 
         return {
             "neutrality_score":   score,

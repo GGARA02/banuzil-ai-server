@@ -2,18 +2,20 @@
 # services/dspy_modules/bullet_module.py
 # 총알잡기 감지 DSPy 모듈
 #
-# 기존: build_bullet_detect_prompt() → call_llm() → json.loads()
-# 현재: BulletDetect Signature → dspy.Predict → 타입된 출력
+# 기본: build_bullet_detect_prompt() → call_llm() → json.loads()
+# DSPy 최적화 파일 있으면: dspy.Predict(BulletDetect) → 타입된 출력
 #
-# 데이터 쌓이면:
-#   detector = BulletDetector()
-#   optimizer = dspy.BootstrapFewShot(metric=bullet_accuracy)
-#   optimized = optimizer.compile(detector, trainset=examples)
-#   optimized.save("bullet_optimized.json")
+# 최적화 파일 위치: dspy_optimized/bullet/v1.json, v2.json, ...
+# 자동으로 최신 버전 로드. 파일 없으면 기존 프롬프트 사용.
 # ============================================================
+
+import os
+from pathlib import Path
 
 import dspy
 from services.dspy_modules import ensure_configured
+
+_OPT_DIR = Path(os.path.dirname(__file__)).parent.parent / "dspy_optimized" / "bullet"
 
 
 class BulletDetect(dspy.Signature):
@@ -46,14 +48,62 @@ class BulletDetector(dspy.Module):
     def __init__(self):
         ensure_configured()
         self.predict = dspy.Predict(BulletDetect)
+        self.is_optimized = False
+        self.version = "default"
+        self._load_latest()
+
+    def _load_latest(self):
+        """dspy_optimized/bullet/ 에서 최신 버전 자동 로드"""
+        if not _OPT_DIR.exists():
+            return
+        versions = sorted(_OPT_DIR.glob("v*.json"))
+        if versions:
+            self.load(str(versions[-1]))
+            self.is_optimized = True
+            self.version = versions[-1].stem  # "v1", "v2", ...
 
     def forward(self, reply: str, eft_stage: int, is_female: bool) -> dict:
-        result = self.predict(
-            reply=reply,
-            eft_stage=eft_stage,
-            is_female=is_female,
-        )
+        if self.is_optimized:
+            return self._dspy_forward(reply, eft_stage, is_female)
+        return self._default_forward(reply, eft_stage, is_female)
 
+    def _dspy_forward(self, reply, eft_stage, is_female):
+        """DSPy 최적화 버전 — Predict 자동 프롬프트"""
+        result = self.predict(
+            reply=reply, eft_stage=eft_stage, is_female=is_female,
+        )
+        return self._validate(result)
+
+    def _default_forward(self, reply, eft_stage, is_female):
+        """기본값 — 기존 프롬프트 + DSPy LM 직접 호출"""
+        from config.prompts.stage_prompts import build_bullet_detect_prompt
+        import json
+
+        prompt = build_bullet_detect_prompt(is_female, eft_stage, reply)
+        lm = dspy.settings.lm
+        raw_list = lm(prompt)
+        raw = raw_list[0] if raw_list else ""
+
+        try:
+            clean = raw.replace("```json", "").replace("```", "").strip()
+            parsed = json.loads(clean)
+        except Exception:
+            parsed = {
+                "bullet_detected": False, "bullet_type": "None",
+                "confidence": 0.0, "suggested_intervention": "",
+            }
+
+        class _Result:
+            pass
+        r = _Result()
+        r.bullet_detected = parsed.get("bullet_detected", False)
+        r.bullet_type = parsed.get("bullet_type", "None")
+        r.confidence = parsed.get("confidence", 0.0)
+        r.suggested_intervention = parsed.get("suggested_intervention", "")
+        return self._validate(r)
+
+    def _validate(self, result):
+        """공통 검증 로직"""
         bullet_type = result.bullet_type
         if bullet_type not in ("Reactive", "Mistrust", "None"):
             bullet_type = "None"
@@ -64,9 +114,9 @@ class BulletDetector(dspy.Module):
             confidence = 0.0
 
         return {
-            "bullet_detected":      bool(result.bullet_detected),
-            "bullet_type":          bullet_type,
-            "confidence":           confidence,
+            "bullet_detected":       bool(result.bullet_detected),
+            "bullet_type":           bullet_type,
+            "confidence":            confidence,
             "suggested_intervention": result.suggested_intervention or "",
         }
 
