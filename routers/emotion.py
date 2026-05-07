@@ -20,7 +20,7 @@ class EmotionRequest(BaseModel):
     class Config:
         json_schema_extra = {
             "example": {
-                "text":      "왜 연락을 안 해? 화가 난다.",
+                "text":      "왜 연락을 안 하는 걸까? 화가 난다.",
                 "gender":    "여성",
                 "situation": "연애"
             }

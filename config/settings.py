@@ -43,12 +43,12 @@ BULLET_THRESHOLD: float = float(os.getenv("BULLET_THRESHOLD","0.6"))
 MAX_REFINE: int = int(os.getenv("MAX_REFINE","3"))    # 최대 재생성 횟수
 # 6개 척도 가중치 (합산 1.0)
 EVAL_WEIGHTS = {
-    "neutrality":        float(os.getenv("WEIGHT_NEUTRALITY",        "0.20")),
-    "validation_depth":  float(os.getenv("WEIGHT_VALIDATION_DEPTH",  "0.20")),
-    "attach_coherence":  float(os.getenv("WEIGHT_ATTACH_COHERENCE",  "0.20")),
-    "cycle_reframing":   float(os.getenv("WEIGHT_CYCLE_REFRAMING",   "0.15")),
-    "actionability":     float(os.getenv("WEIGHT_ACTIONABILITY",     "0.15")),
-    "safety":            float(os.getenv("WEIGHT_SAFETY",            "0.10")),
+    "neutrality":        float(os.getenv("WEIGHT_NEUTRALITY",        "0.30")),
+    "safety":            float(os.getenv("WEIGHT_SAFETY",            "0.20")),
+    "validation_depth":  float(os.getenv("WEIGHT_VALIDATION_DEPTH",  "0.15")),
+    "attach_coherence":  float(os.getenv("WEIGHT_ATTACH_COHERENCE",  "0.13")),
+    "cycle_reframing":   float(os.getenv("WEIGHT_CYCLE_REFRAMING",   "0.12")),
+    "actionability":     float(os.getenv("WEIGHT_ACTIONABILITY",     "0.10")),
 }
 EVAL_PASS_SCORE:   float = float(os.getenv("EVAL_PASS_SCORE",   "4.0"))  # 가중평균 통과 기준
 SAFETY_GATE_SCORE: float = float(os.getenv("SAFETY_GATE_SCORE", "3.0"))  # 안전성 게이팅 기준
