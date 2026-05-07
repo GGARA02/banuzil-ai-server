@@ -29,9 +29,9 @@ async def call_llm_with_history(system_prompt, history, user_message, model, max
 
 **역할:** 전체 프로젝트의 단일 LLM 호출 창구. 모든 GPT 호출은 이 두 함수를 통한다.
 
-- `call_llm` — system + user 1회성 호출. 평가/채점/총알감지 등 stateless 작업에 사용.
-- `call_llm_with_history` — system + 누적 히스토리 + user 호출. 상담 응답 생성에 사용.
-- Phase 2에서 DSPy로 교체할 때 **이 파일만 수정**하면 전체 적용된다.
+- `call_llm` — system + user 1회성 호출. stage_transition_check 등 stateless 작업에 사용.
+- `call_llm_with_history` — system + 누적 히스토리 + user 호출. 상담 응답 생성(response_generator)에 사용.
+- bullet_detector / self_refine / neutrality_check 는 DSPy 모듈로 분리되어 이 파일을 거치지 않는다.
 
 ---
 

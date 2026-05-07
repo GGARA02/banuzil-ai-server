@@ -76,8 +76,7 @@ banuzil-ai-server/
 │   └── prompts/
 │       ├── __init__.py
 │       ├── eft_base.py              # 시스템 프롬프트 / 유저 메시지 빌더
-│       ├── stage_prompts.py         # EFT 단계별 지침 + 신호 평가 프롬프트
-│       └── neutrality_check.py      # 중립성 검사 프롬프트 빌더
+│       └── stage_prompts.py         # EFT 단계별 지침 + 신호 평가 프롬프트
 │
 ├── data/
 │   ├── raw/                         # 원본 학습 데이터 (xlsx)
@@ -93,11 +92,6 @@ banuzil-ai-server/
 │   ├── unweighted/                  # 감성 대분류 모델 (best_model.pt)
 │   ├── low_weight/                  # 감성 소분류 모델 (best_model.pt)
 │   └── weighted*/                   # 기타 실험 체크포인트
-│
-├── app/                             # 레거시 (v1 구조 잔재, 사용 안 함)
-│   ├── main.py                      # v1 진입점 — 현재는 루트 main.py 사용
-│   ├── routers/emotion.py           # → routers/emotion.py로 이전됨
-│   └── services/emotion_service.py  # → services/emotion_service.py로 이전됨
 │
 ├── test_client.html                 # 브라우저 테스트 클라이언트 (http://localhost:8000/test)
 ├── .env                             # 환경 변수 (OPENAI_API_KEY만 교체)
@@ -278,7 +272,7 @@ FastAPI 앱 생성, CORS 설정, 라우터 등록. 테스트 클라이언트 HTM
 ---
 
 ### `services/llm.py`
-LangChain + OpenAI 호출 공유 인터페이스. Phase 2에서 DSPy로 교체 시 이 파일만 수정한다.
+LangChain + OpenAI 호출 공유 인터페이스. response_generator·stage_transition_check 노드에서 사용. DSPy 모듈(bullet/eval/neutrality)은 내부적으로 별도 LM을 사용한다.
 
 | 함수 | 설명 |
 |------|------|
@@ -438,7 +432,7 @@ KoELECTRA 파인튜닝 스크립트. **서버 실행과 무관** — 모델 학�
 | `MAX_OUTPUT_TOKENS` | `800` | 상담 응답 최대 토큰 |
 | `REPORT_MAX_TOKENS` | `3000` | 최종 보고서 최대 토큰 |
 | `EVAL_MAX_TOKENS` | `600` | EFT 진행 평가 최대 토큰 |
-| `BULLET_MAX_TOKENS` | `300` | 총알잡기 감지 최대 토큰 |
+| `BULLET_MAX_TOKENS` | `300` | 총알잡기 감지 최대 토큰 (DSPy 내부 참조용, settings.py에 보존) |
 
 ### 애착 분류 컷오프
 | 변수 | 기본값 | 설명 |
