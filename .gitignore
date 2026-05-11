@@ -27,6 +27,9 @@ models/combined/
 models/concat/
 models/concat_unweight/
 
+# AIHub 참조모델 비교 테스트 (로컬 전용)
+data/finetune/aihub_test/
+
 # 전처리된 데이터 (재생성 가능)
 data/processed/
 

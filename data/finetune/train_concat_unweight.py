@@ -210,14 +210,16 @@ def eval_epoch(model, loader, cat_criterion, det_criterion):
             cl   = batch["category_label"].to(DEVICE)
             dl   = batch["detail_label"].to(DEVICE)
 
-            # 평가: 대분류도 예측값 사용 (실전과 동일)
-            cat_logits, det_logits = model(ids, mask, tt, category_ids=None)
+            # loss: GT 대분류로 마스킹 (inf 방지)
+            _, det_logits_gt = model(ids, mask, tt, category_ids=cl)
+            cat_logits, det_logits_pred = model(ids, mask, tt, category_ids=None)
 
-            loss = 0.6 * cat_criterion(cat_logits, cl) + 0.4 * det_criterion(det_logits, dl)
+            loss = 0.6 * cat_criterion(cat_logits, cl) + 0.4 * det_criterion(det_logits_gt, dl)
             total_loss += loss.item()
+            # F1: 예측 대분류로 마스킹 (실전과 동일)
             cat_p.extend(torch.argmax(cat_logits, -1).cpu().numpy())
             cat_l.extend(cl.cpu().numpy())
-            det_p.extend(torch.argmax(det_logits, -1).cpu().numpy())
+            det_p.extend(torch.argmax(det_logits_pred, -1).cpu().numpy())
             det_l.extend(dl.cpu().numpy())
 
     return (total_loss / len(loader),
