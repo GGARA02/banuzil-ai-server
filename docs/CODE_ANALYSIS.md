@@ -44,7 +44,7 @@
 - `RISK_DETECTION_THRESHOLD` — 자해/자살/폭력 키워드 매칭 → 즉시 상담 중단
 - `BULLET_THRESHOLD` — GPT 기반 방어적/공격적 발화 감지 → 상담 전략 조정
 
-### 3. `schemas/request.py` + `schemas/response.py` — Spring ↔ Python 데이터 계약
+### 3. `schemas/request.py` + `schemas/response.py` — Spring ↔ Python 데이터 계약 (Stateless)
 
 **Pydantic BaseModel** 기반. JSON 수신 시 타입 검증 + 범위 검사 자동 수행.
 
@@ -52,19 +52,19 @@
 
 | 요청 | 응답 | 설명 |
 |---|---|---|
-| `SessionCreateRequest` | `SessionCreateResponse` | 세션 생성 (ECR-R 점수) |
-| `CounselingRoundRequest` | `CounselingRoundResponse` | 매 라운드 (양측 발화 → 양측 응답) |
-| `CycleConsentRequest` | `CycleExploreResponse` / `CycleDefinitionResponse` / `CycleAgreedResponse` | 사이클 탐색/정의/동의 |
-| `ReportRequest` | `CounselingReportResponse` | 최종 보고서 (여성/남성 분리) |
+| `RoundAnalyzeRequest` | `RoundAnalyzeResponse` | 라운드 분석 (프로필 + 히스토리 + 상태 전체 수신 → 결과 + updated_* 반환) |
+| `CycleRequest` | `CycleExploreResponse` / `CycleDefinitionResponse` | 사이클 탐색/정의 (동의는 Spring이 관리) |
+| `ReportRequest` | `ReportResponse` | 최종 보고서 (히스토리 + 프로필 직접 수신) |
 
-`CounselingRoundResponse`의 핵심 필드:
+`RoundAnalyzeResponse`의 핵심 필드:
 - `f_message`, `m_message` — Spring이 내담자에게 전달할 상담 메시지
+- `updated_*` 필드들 — Spring이 DB에 저장해야 할 갱신된 상태
 - `risk_flag` — True면 즉시 상담 중단
-- `needs_cycle_definition` — True면 사이클 정의 화면 표시
+- `needs_cycle_definition` — True면 `/ai/cycle` 호출 필요
 - `eval_scores`, `neutrality_result`, `f_emotion`, `m_emotion` 등 — 디버깅/로깅용
 
-`SessionCreateRequest`의 오버라이드 옵션 (`model_name`, `bullet_enabled`, `emotion_weight`):
-- 기본은 settings.py 값 사용, Spring이 특정 세션에만 다른 설정을 적용할 때 사용
+오버라이드 옵션 (`model_name`, `bullet_enabled`, `emotion_weight`):
+- 기본은 settings.py 값 사용, Spring이 특정 요청에만 다른 설정을 적용할 때 사용
 
 ---
 
@@ -155,19 +155,9 @@
 
 → `CoupleProfile` 완성. 이후 상담 전체에서 참조됨.
 
-### 8. `services/session_store.py` — 메모리 기반 세션 저장소
+### 8. `services/session_store.py` — (v3에서 미사용)
 
-파이썬 딕셔너리 하나(`_store`)가 전체 세션 저장소.
-
-| 함수 | 설명 |
-|---|---|
-| `session_get(id)` | 세션 조회 + 만료 체크 (lazy expiration) |
-| `session_set(id, data)` | 저장/갱신 + 만료 시간 리셋 (24시간) |
-| `session_delete(id)` | 삭제 |
-| `session_exists(id)` | 존재 여부 (get 내부 호출로 만료 체크 포함) |
-
-**한계**: 서버 재시작 시 세션 소멸, 다중 서버 시 세션 공유 불가.
-**차후**: Redis로 교체 시 이 파일만 수정 (함수 인터페이스 동일 유지).
+v2에서 사용하던 인메모리 세션 저장소. v3 Stateless 전환으로 라우터에서 참조하지 않는다. 세션 관리는 Spring DB로 이관됨.
 
 ### 9. `services/llm.py` — GPT API 호출 유틸
 
@@ -392,40 +382,37 @@ response_generator → neutrality_check ──실패──→ response_generator
 
 ## Stage 7 — 상담 라우터
 
-### 20. `routers/counseling.py` — Spring 연동 최종 접점
+### 20. `routers/counseling.py` — Spring 연동 최종 접점 (v3 Stateless)
 
 | 엔드포인트 | 메서드 | 설명 |
 |---|---|---|
-| `/counseling/session` | POST | 세션 생성 (ECR-R → 32분류 프로파일 조립 → 세션 저장) |
-| `/counseling/round` | POST | 라운드 실행 (세션 복원 → 그래프 실행 → 히스토리 누적 → 세션 업데이트) |
-| `/counseling/cycle` | POST | 사이클 탐색/정의/동의 (3가지 분기) |
-| `/counseling/end` | POST | 3단계 종료 동의 |
-| `/counseling/report` | POST | 최종 보고서 (여성/남성 병렬 생성) |
-| `/counseling/session/{id}` | DELETE | 세션 삭제 |
+| `/ai/round-analyze` | POST | 라운드 분석 (전체 컨텍스트 수신 → 분석 결과 + updated_* 반환) |
+| `/ai/cycle` | POST | 사이클 탐색/정의 (동의는 Spring이 DB에서 관리) |
+| `/ai/report` | POST | 최종 보고서 (히스토리 + 프로필 직접 수신) |
 
-**`/counseling/round` 핵심 흐름:**
-1. `session_get()` → 세션에서 상태 복원
-2. `create_initial_state()` → LangGraph State 조립
-3. `graph.ainvoke(state)` → 7개 노드 순차 실행
-4. 히스토리 누적: `[{role: "user", content: 발화}, {role: "assistant", content: AI응답}]`
-5. `session_set()` → 세션 업데이트
-6. `CounselingRoundResponse` 반환
+**`/ai/round-analyze` 핵심 흐름:**
+1. Spring이 보낸 ECR-R 점수로 `build_couple_profile()` → CoupleProfile 즉석 계산
+2. Spring이 보낸 signals dict → `_signals_from_dict()` → SignalState 복원
+3. `create_initial_state()` → LangGraph State 조립
+4. `graph.ainvoke(state)` → 7개 노드 순차 실행
+5. 히스토리에 현재 라운드 추가: `req.f_history + [user발화, AI응답]`
+6. `RoundAnalyzeResponse` 반환 (updated_* 필드 포함)
 
-**`/counseling/cycle` 3가지 분기:**
-1. 양측 동의 (f_agreed + m_agreed) → eft_stage=2, CycleAgreedResponse
-2. cycle_definition 없음 → 탐색 질문 생성 (GPT), CycleExploreResponse
-3. cycle_definition 있음 → 사이클 정의 생성 (GPT), CycleDefinitionResponse
+**`/ai/cycle` 2가지 분기:**
+1. cycle_definition 없음 → 탐색 질문 생성 (GPT), CycleExploreResponse
+2. cycle_definition 있음 → 사이클 정의 생성 (GPT), CycleDefinitionResponse
+- 동의 처리는 제거됨 — Spring이 DB에서 직접 관리
 
 **Spring 관점 API 호출 순서:**
 ```
-1. POST /counseling/session       → 세션 생성
-2. POST /counseling/round (반복)  → 1단계 상담
+1. Spring이 세션 생성 (DB)
+2. POST /ai/round-analyze (반복)  → 1단계 상담
    ← needs_cycle_definition=True
-3. POST /counseling/cycle         → 탐색 질문 → 사이클 정의 → 동의 → 2단계 진입
-4. POST /counseling/round (반복)  → 2~3단계 상담
-5. POST /counseling/end           → 종료 동의
-6. POST /counseling/report        → 보고서 수신
-7. DELETE /counseling/session/{id} → 세션 정리
+3. POST /ai/cycle                 → 탐색 질문 → 사이클 정의
+   Spring이 동의 수집 → DB에 eft_stage=2 저장
+4. POST /ai/round-analyze (반복)  → 2~3단계 상담
+5. Spring이 종료 동의 수집 (DB)
+6. POST /ai/report               → 보고서 수신
 ```
 
 ---

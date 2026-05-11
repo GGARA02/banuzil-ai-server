@@ -22,7 +22,7 @@
 | **EFT 커플 상담 AI** | Emotionally Focused Therapy 기반. 커플의 애착 유형을 분석하고 3단계 상담을 진행. LangGraph 상태 그래프로 구현. |
 | **감성 분석 API** | 발화 텍스트의 감정을 분류. KoELECTRA 파인튜닝 모델(대분류 2개 + 소분류 3개) 사용. |
 
-Spring 백엔드 서버가 session_id와 커플의 발화를 보내면, 이 서버가 모든 상담 상태를 관리하고 AI 응답을 반환한다.
+**v3.0 Stateless 구조**: AI 서버는 상태를 보유하지 않는다. Spring이 세션 생명주기·히스토리·EFT 상태를 DB로 관리하고, 매 요청에 필요한 컨텍스트를 전달한다. AI 서버는 분석 결과 + 업데이트된 상태를 반환하는 순수 분석 엔진이다.
 
 ---
 
@@ -48,14 +48,14 @@ banuzil-ai-server/
 │
 ├── routers/
 │   ├── __init__.py
-│   ├── counseling.py                # 상담 API 엔드포인트 (5개)
+│   ├── counseling.py                # 상담 AI 엔드포인트 (3개: /ai/round-analyze, /ai/cycle, /ai/report)
 │   └── emotion.py                   # 감성 분석 API 엔드포인트 (3개)
 │
 ├── services/
 │   ├── __init__.py
 │   ├── llm.py                       # LLM 호출 공유 인터페이스
 │   ├── emotion_service.py           # KoELECTRA 감성 분석 싱글턴 서비스
-│   ├── session_store.py             # 인메모리 세션 저장소
+│   ├── session_store.py             # 인메모리 세션 저장소 (v3에서 미사용, 참고용)
 │   ├── report_service.py            # 최종 보고서 생성
 │   └── attachment_service.py        # ECR-R → 커플 프로파일 빌더 (32분류)
 │
@@ -118,9 +118,9 @@ EFT(정서중심치료)는 커플 갈등을 3단계로 진행한다.
 
 | 단계 | 목표 | 진입 조건 | 종료 조건 |
 |------|------|-----------|-----------|
-| **1단계** | 부정적 상호작용 사이클 탐색 | 세션 시작 | 양측 사이클 동의 (`/cycle` 엔드포인트) |
+| **1단계** | 부정적 상호작용 사이클 탐색 | 세션 시작 | 양측 사이클 동의 (Spring DB 관리) |
 | **2단계** | 1차 정서 접근 + 애착 욕구 표현 | 사이클 동의 완료 | 신호 기반 자동 전환 |
-| **3단계** | 새로운 상호작용 패턴 통합 | 신호 누적 충족 | 양측 종료 동의 (`/end` 엔드포인트) |
+| **3단계** | 새로운 상호작용 패턴 통합 | 신호 누적 충족 | 양측 종료 동의 (Spring DB 관리) |
 
 단계는 **후퇴하지 않는다** (1→2→3 단방향).
 
@@ -192,7 +192,7 @@ response_generator 직후, self_refine 직전에 실행. AI 응답이 여성 또
 
 ## 5. LangGraph 실행 흐름
 
-`POST /counseling/round` 호출 시 아래 그래프가 실행된다.
+`POST /ai/round-analyze` 호출 시 아래 그래프가 실행된다.
 
 ```
 [입력: f_reply, m_reply]
@@ -249,20 +249,17 @@ FastAPI 앱 생성, CORS 설정, 라우터 등록. 테스트 클라이언트 HTM
 ---
 
 ### `routers/counseling.py`
-상담 관련 엔드포인트 5개. 세션 상태를 `session_store`에서 꺼내고 → LangGraph 실행 → 다시 저장하는 패턴.
+상담 AI 분석 엔드포인트 3개. Stateless — 세션 상태를 보유하지 않고 매 요청에서 받아 처리한다.
 
 | 함수 | 엔드포인트 | 역할 |
 |------|-----------|------|
-| `create_session` | POST /counseling/session | 커플 프로파일 생성 + 세션 초기화 |
-| `counseling_round` | POST /counseling/round | LangGraph 1회 실행 |
-| `counseling_cycle` | POST /counseling/cycle | 사이클 탐색/정의/동의 처리 |
-| `counseling_end` | POST /counseling/end | 3단계 종료 동의 수집 |
-| `counseling_report` | POST /counseling/report | 최종 보고서 생성 |
-| `delete_session` | DELETE /counseling/session/{id} | 세션 삭제 |
+| `round_analyze` | POST /ai/round-analyze | 전체 컨텍스트를 받아 LangGraph 실행 후 결과 + 업데이트된 상태 반환 |
+| `cycle_analyze` | POST /ai/cycle | 사이클 탐색/정의 (동의는 Spring이 관리) |
+| `generate_final_report` | POST /ai/report | 최종 보고서 생성 (히스토리 + 프로필을 직접 수신) |
 
 내부 헬퍼:
-- `_signals_to_dict(signals)` — SignalState → dict (세션 저장용)
-- `_signals_from_dict(d)` — dict → SignalState (세션 복원용)
+- `_signals_to_dict(signals)` — SignalState → dict (응답 직렬화용)
+- `_signals_from_dict(d)` — dict → SignalState (요청 역직렬화용)
 
 ---
 
@@ -312,17 +309,8 @@ KoELECTRA 기반 감성 분류. **싱글턴 패턴** — 서버 시작 시 한 �
 
 ---
 
-### `services/session_store.py`
-Python 딕셔너리 기반 인메모리 세션 저장소. 서버 재시작 시 초기화된다.
-
-| 함수 | 설명 |
-|------|------|
-| `session_get(session_id)` | 세션 조회. 만료 시 None 반환 |
-| `session_set(session_id, data)` | 세션 저장/갱신. TTL 리셋 |
-| `session_delete(session_id)` | 세션 삭제 |
-| `session_exists(session_id)` | 세션 존재 여부 |
-
-`SESSION_TTL_HOURS = 24` (기본 24시간). Redis 교체 시 이 파일만 수정하면 된다.
+### `services/session_store.py` (v3에서 미사용)
+v2에서 사용하던 인메모리 세션 저장소. v3 Stateless 전환으로 라우터에서 참조하지 않는다. 참고용으로 남겨둠.
 
 ---
 
@@ -484,29 +472,22 @@ KoELECTRA 파인튜닝 스크립트. **서버 실행과 무관** — 모델 학�
 
 ---
 
-## 8. 세션 구조
+## 8. Spring DB 저장 구조
 
-`session_store`에 저장되는 세션 dict 필드 목록.
+v3에서 세션 상태는 Spring DB에 저장된다. AI 서버는 매 요청에서 아래 필드를 수신하고, 응답의 `updated_*` 필드로 갱신된 값을 반환한다.
 
-| 필드 | 타입 | 설명 |
-|------|------|------|
-| `couple_profile` | `CoupleProfile` | 커플 애착 프로파일 전체 |
-| `f_history` | `list[dict]` | 여성 대화 히스토리 `[{"role": "user"\|"assistant", "content": str}]` |
-| `m_history` | `list[dict]` | 남성 대화 히스토리 |
-| `eft_stage` | `int` | 현재 EFT 단계 (1/2/3) |
-| `eft_step` | `int` | EFT 세부 스텝 (1~9, 현재 미세분화) |
-| `stage_rounds` | `dict[int,int]` | 단계별 누적 라운드 수 `{1: n, 2: n, 3: n}` |
-| `stage_progress` | `int` | 현재 단계 진행도 (0~100) |
-| `signals` | `SignalState` | EFT 진행 신호 누적 객체 |
-| `cycle_definition` | `str` | 부정적 상호작용 사이클 정의 텍스트 |
-| `cycle_agreed` | `dict` | 사이클 동의 여부 `{"f": bool, "m": bool}` |
-| `end_agreed` | `dict` | 종료 동의 여부 `{"f": bool, "m": bool}` |
-| `round_num` | `int` | 누적 라운드 번호 |
-| `model_name` | `str\|None` | 이 세션에서 사용할 모델명 오버라이드 |
-| `bullet_enabled` | `bool\|None` | 총알잡기 ON/OFF 오버라이드 |
-| `emotion_weight` | `float\|None` | 감성 반영 강도 오버라이드 |
-| `needs_cycle_definition` | `bool` | 사이클 정의 필요 플래그 |
-| `_expires_at` | `datetime` | 세션 만료 시각 (자동 관리) |
+| 필드 | 타입 | Spring DB 저장 | 설명 |
+|------|------|---------------|------|
+| `f_history` | `list[dict]` | JSONB (user1_message) | 여성 대화 히스토리 `[{"role": "user"\|"assistant", "content": str}]` |
+| `m_history` | `list[dict]` | JSONB (user2_message) | 남성 대화 히스토리 |
+| `eft_stage` | `int` | INTEGER | 현재 EFT 단계 (1/2/3) |
+| `stage_rounds` | `dict[int,int]` | JSONB | 단계별 누적 라운드 수 `{1: n, 2: n, 3: n}` |
+| `stage_progress` | `int` | INTEGER | 현재 단계 진행도 (0~100) |
+| `signals` | `dict` | JSONB | EFT 진행 신호 `{"f": {...}, "m": {...}}` |
+| `cycle_definition` | `str` | TEXT | 부정적 상호작용 사이클 정의 텍스트 |
+| `cycle_agreed` | — | BOOLEAN x2 | Spring이 직접 관리 |
+| `end_agreed` | — | BOOLEAN x2 | Spring이 직접 관리 |
+| `round_num` | `int` | INTEGER | 누적 라운드 번호 |
 
 ---
 
@@ -534,5 +515,4 @@ python -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 ### 엔드포인트 확인
 
 - Swagger UI: `http://localhost:8000/docs`
-- 테스트 클라이언트: `http://localhost:8000/test`
 - 헬스체크: `GET http://localhost:8000/emotion/health`
