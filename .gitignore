@@ -22,6 +22,10 @@ models/weighted/
 models/weighted_v2/
 models/low_weight_v2/
 models/unweighted_v2/
+models/unweighted_aigen/
+models/combined/
+models/concat/
+models/concat_unweight/
 
 # 전처리된 데이터 (재생성 가능)
 data/processed/
