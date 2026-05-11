@@ -1,56 +1,53 @@
 # ============================================================
-# schemas/response.py — Python → Spring 응답 스키마 (Stateful)
+# schemas/response.py — Python → Spring 응답 스키마 (Stateless)
 #
-# Spring이 받는 것: 텍스트 메시지 + 최소한의 상태 플래그
-# Spring이 저장할 것: f_message, m_message (DB 저장용)
+# AI 서버는 분석 결과 + 상태 변경 힌트를 반환.
+# Spring이 이 결과를 받아 DB에 저장하고 상태를 업데이트함.
 # ============================================================
 
 from pydantic import BaseModel, Field
 from typing import Optional
 
 
-class SessionCreateResponse(BaseModel):
-    """POST /counseling/session 응답"""
-    session_id:     str
-    status:         str = "created"
-    classification: str  # 32분류 레이블
-    ipv_risk_flag:  bool = False
-    message:        str = "세션이 생성되었습니다. 상담을 시작하세요."
-
-
-class CounselingRoundResponse(BaseModel):
+class RoundAnalyzeResponse(BaseModel):
     """
-    POST /counseling/round 응답.
-    Spring은 f_message → 여성에게, m_message → 남성에게 전달.
-    나머지 필드는 Spring이 필요한 경우만 사용.
+    POST /ai/round-analyze 응답.
+    Spring은 이 결과를 받아서:
+    1. f_message/m_message → 각 내담자에게 전달
+    2. updated_* 필드들 → DB에 저장 (다음 라운드 요청에 재전달)
     """
     session_id: str
 
-    # Spring이 내담자에게 전달할 텍스트 (핵심)
-    f_message:  str
-    m_message:  str
+    # 내담자에게 전달할 응답 텍스트
+    f_message: str
+    m_message: str
 
-    # Spring이 UI 처리에 필요한 최소 플래그
-    eft_stage:              int
-    needs_cycle_definition: bool = False  # True면 /counseling/cycle 호출
-    risk_flag:              bool = False  # True면 상담 중단 + 전문기관 연계
+    # Spring이 DB에 저장해야 할 업데이트된 상태
+    updated_eft_stage:    int
+    updated_stage_rounds: dict
+    updated_stage_progress: int
+    updated_signals:      dict
+    updated_f_history:    list[dict]
+    updated_m_history:    list[dict]
+
+    # Spring UI 처리용 플래그
+    needs_cycle_definition: bool = False
+    risk_flag:              bool = False
     risk_category:          str  = ""
 
-    # 디버깅/로깅용 (Spring이 저장해두면 유용)
-    stage_progress:    int   = 0
-    bullet_detected:   bool  = False
-    bullet_type:       str   = "None"           # "Reactive" / "Mistrust" / "None"
+    # 디버깅/로깅용
+    bullet_detected:   bool            = False
+    bullet_type:       str             = "None"
     eval_score:        Optional[float] = None
-    eval_scores:       Optional[dict]  = None   # 세부 점수 (neutrality, validation_depth, ...)
-    neutrality_result: Optional[dict]  = None   # score, bias_direction, passed, regen_triggered
-    f_emotion:         Optional[dict]  = None   # KoELECTRA 여성 감성 분석 결과
-    m_emotion:         Optional[dict]  = None   # KoELECTRA 남성 감성 분석 결과
-    signals_state:     Optional[dict]  = None   # EFT 진행 신호 {f:{...}, m:{...}}
-    risk_keywords:     list            = []      # 감지된 위험 키워드
+    eval_scores:       Optional[dict]  = None
+    neutrality_result: Optional[dict]  = None
+    f_emotion:         Optional[dict]  = None
+    m_emotion:         Optional[dict]  = None
+    risk_keywords:     list            = []
 
 
 class CycleExploreResponse(BaseModel):
-    """POST /counseling/cycle — 탐색 질문 단계"""
+    """사이클 탐색 질문"""
     session_id:  str
     f_question:  str
     m_question:  str
@@ -58,22 +55,14 @@ class CycleExploreResponse(BaseModel):
 
 
 class CycleDefinitionResponse(BaseModel):
-    """POST /counseling/cycle — 사이클 정의 단계"""
+    """사이클 정의 결과"""
     session_id:       str
     cycle_definition: str
     message:          str = "양측 동의를 기다립니다."
 
 
-class CycleAgreedResponse(BaseModel):
-    """POST /counseling/cycle — 동의 완료"""
-    session_id:  str
-    status:      str = "cycle_agreed"
-    next_stage:  int = 2
-    message:     str = "사이클 동의 완료. 2단계로 진입합니다."
-
-
-class CounselingReportResponse(BaseModel):
-    """POST /counseling/report 응답"""
+class ReportResponse(BaseModel):
+    """최종 보고서"""
     session_id: str
-    f_report:   str  # 여성 내담자 전용 보고서 텍스트
-    m_report:   str  # 남성 내담자 전용 보고서 텍스트
+    f_report:   str
+    m_report:   str

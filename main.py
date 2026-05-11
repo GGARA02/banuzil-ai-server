@@ -13,8 +13,8 @@ from routers import emotion, counseling
 
 app = FastAPI(
     title       = "바느질 AI 서버",
-    description = "EFT 상담 AI + KoELECTRA 감성 분석 서버",
-    version     = "2.0.0",
+    description = "EFT 상담 AI + KoELECTRA 감성 분석 서버 (Stateless)",
+    version     = "3.0.0",
 )
 
 # CORS — 개발 중 전체 허용
@@ -38,15 +38,15 @@ async def test_client():
 async def root():
     return {
         "service": "바느질 AI 서버",
-        "version": "2.0.0",
+        "version": "3.0.0",
         "docs":    "http://localhost:8000/docs",
         "test":    "http://localhost:8000/test",
         "endpoints": {
-            "상담 세션 생성": "POST /counseling/session",
-            "상담 라운드":    "POST /counseling/round",
-            "사이클 절차":    "POST /counseling/cycle",
-            "종료 동의":      "POST /counseling/end",
-            "최종 보고서":    "POST /counseling/report",
+            "라운드 분석":    "POST /ai/round-analyze",
+            "사이클 절차":    "POST /ai/cycle",
+            "최종 보고서":    "POST /ai/report",
             "감성 분석 단일": "POST /emotion/analyze",
+            "감성 분석 배치": "POST /emotion/analyze/batch",
+            "감성 분석 헬스": "GET  /emotion/health",
         }
     }
