@@ -72,8 +72,5 @@ async def health_check():
     """서버 상태 확인"""
     return {
         "status": "ok",
-        "models": {
-            "category_model": "unweighted",
-            "detail_model":   "low_weight",
-        }
+        "model":  "concat_unweight (hierarchical)",
     }
