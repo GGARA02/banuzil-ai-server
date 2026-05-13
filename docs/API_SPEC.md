@@ -175,8 +175,8 @@ v2에서 AI 서버가 메모리에 세션 상태를 관리했으나, v3에서는
 | `eval_score` | float \| null | 응답 품질 가중평균 점수 |
 | `eval_scores` | object \| null | Self-Refine 세부 점수 |
 | `neutrality_result` | object \| null | 중립성 검사 결과 |
-| `f_emotion` | object \| null | KoELECTRA 여성 감성 분석 |
-| `m_emotion` | object \| null | KoELECTRA 남성 감성 분석 |
+| `f_emotion` | object \| null | KcELECTRA 여성 감성 분석 |
+| `m_emotion` | object \| null | KcELECTRA 남성 감성 분석 |
 | `risk_keywords` | array | 감지된 위험 키워드 목록 |
 
 > **핵심**: `updated_*` 접두사가 붙은 필드들을 DB에 저장하고, 다음 라운드 요청에 그대로 재전달하면 된다.
@@ -347,6 +347,7 @@ Spring이 관리하는 흐름:
 ## 4. POST /emotion/analyze — 단일 감성 분석
 
 상담과 독립적으로 단일 발화의 감성을 분석한다. 테스트/디버깅용.
+HierarchicalEmotionModel(concat_unweight) 단일 모델로 대분류/소분류를 동시 추론한다.
 (상담 내부에서는 LangGraph 파이프라인이 EmotionService를 직접 호출하므로 이 엔드포인트를 거치지 않는다.)
 
 ### Request Body
@@ -362,7 +363,7 @@ Spring이 관리하는 흐름:
 ```json
 {
   "input": {"gender": "여성", "situation": "연애", "text": "왜 연락을 안 해? 화가 난다."},
-  "models": {"category_model": "unweighted", "detail_model": "low_weight"},
+  "model": "concat_unweight",
   "category": [
     {"rank": 1, "label": "분노", "score": 0.7134},
     {"rank": 2, "label": "상처", "score": 0.1823}
@@ -399,7 +400,7 @@ Spring이 관리하는 흐름:
 ```json
 {
   "status": "ok",
-  "models": {"category_model": "unweighted", "detail_model": "low_weight"}
+  "model": "concat_unweight (hierarchical)"
 }
 ```
 
