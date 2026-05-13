@@ -173,6 +173,15 @@
         <button class="btn-primary" onclick="initSession()">세션 시작</button>
       </div>
       <div id="sessionInfo" class="info-card hidden"></div>
+      <!-- 총알잡기 토글 -->
+      <div>
+        <div style="font-size:11px;font-weight:600;margin-bottom:5px;">총알잡기 (Bullet Detection)</div>
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;margin-top:3px;">
+          <input type="checkbox" id="bulletEnabled">
+          <span style="font-size:11px;">총알잡기 활성화</span>
+        </label>
+        <div style="font-size:10px;color:var(--muted);margin-top:3px;line-height:1.5;">기본 OFF. DSPy 기반 공격/불신 발화 감지.</div>
+      </div>
       <!-- 자동 테스트 -->
       <div>
         <div style="font-size:11px;font-weight:600;margin-bottom:5px;">자동 테스트 (GPT-4o-mini)</div>
@@ -501,6 +510,7 @@ async function sendRound() {
       stage_progress:   STATE.stageProgress,
       signals:          STATE.signals,
       cycle_definition: STATE.cycleDefinition,
+      bullet_enabled:   document.getElementById('bulletEnabled').checked,
     });
 
     // updated_* 필드로 로컬 상태 갱신 (Spring이 DB에 저장할 것들)
@@ -525,13 +535,10 @@ async function sendRound() {
     updatePills();
     updateStateDebug();
 
-    // 위험 감지
+    // 위험 감지 시에도 상담 계속 — 경고만 표시 (Spring이 별도 처리)
     if (data.risk_flag) {
-      addMsg('f', 'danger', '위험 감지', data.f_message);
-      addMsg('m', 'danger', '위험 감지', data.m_message);
-      addSys(`위험 감지: ${data.risk_category}`);
+      addSys(`위험 신호 감지: ${data.risk_category} [${(data.risk_keywords||[]).join(', ')}] — 상담 계속 진행, Spring에 전달됨`);
       document.getElementById('riskBadge').classList.remove('hidden');
-      return;
     }
 
     addMsg('f', 'ai', `AI -> 여성 R${STATE.roundNum}`, data.f_message);
@@ -695,7 +702,7 @@ function updateRiskPanel(data) {
     document.getElementById('riskBadge').classList.add('hidden');
   } else {
     const kwH = kws.map(k => `<span class="risk-kw">${esc(k)}</span>`).join('');
-    p.innerHTML = `<div class="risk-card on"><div style="font-size:12px;font-weight:700;color:var(--danger);">위험 감지: ${esc(cat)}</div><div style="font-size:11px;color:var(--text2);margin-top:3px;">상담이 중단되었습니다.</div>${kws.length ? `<div class="risk-kw-list">${kwH}</div>` : ''}</div>`;
+    p.innerHTML = `<div class="risk-card on"><div style="font-size:12px;font-weight:700;color:var(--danger);">위험 감지: ${esc(cat)}</div><div style="font-size:11px;color:var(--text2);margin-top:3px;">상담 계속 진행 — Spring에 위험 신호 전달됨</div>${kws.length ? `<div class="risk-kw-list">${kwH}</div>` : ''}</div>`;
     document.getElementById('riskBadge').classList.remove('hidden');
   }
 }
@@ -720,7 +727,7 @@ function updateEvalPanel(scores) {
   p.innerHTML = h;
 }
 
-const SIG_LABELS = {emotion:'1차 감정 어휘', patternAware:'패턴 인식', otherSide:'상대 이면', relationConcern:'관계 걱정', vulnerability:'취약성 표현', empathy:'상대 연민', recoveryWill:'회복 의지', newComm:'새 소통 시도'};
+const SIG_LABELS = {emotion:'1차 감정 어휘', patternAware:'패턴 인식', otherSide:'상대 이면', relationConcern:'관계 걱정', vulnerability:'취약성 표현', empathy:'공감 반응', withdrawer_reengagement:'철회자 재관여', blamer_softening:'비난자 연화'};
 function updateSignalPanel(sig) {
   const p = document.getElementById('signalPanel');
   if (!sig) { p.innerHTML = '<div class="empty-note">신호 데이터 없음</div>'; return; }

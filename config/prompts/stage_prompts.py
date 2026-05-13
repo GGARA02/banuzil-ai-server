@@ -15,15 +15,15 @@ SIGNAL_LABELS = {
     "patternAware":    "자신의 반응 패턴 인식 (내가 왜 이렇게 행동했는지)",
     "otherSide":       "상대 행동의 이면 언급 (상대도 힘들었겠다는 시각)",
     "relationConcern": "관계 자체에 대한 걱정 표현",
-    # 2단계 신호
-    "vulnerability":   "취약성 직접 표현 (당신이 멀어질 때 나는 ~ 무서워요)",
-    "empathy":         "상대에 대한 연민 발화 (상대도 실망시키기 싫어서 숨었겠구나)",
-    "recoveryWill":    "관계 회복 의지 직접 표현 (다시 해보고 싶다)",
-    "newComm":         "새로운 소통 시도 언급 (이번엔 화내기 전에 먼저 말해볼게요)",
+    # 2단계 신호 (EFT 원모델 기반: Sue Johnson 핵심 변화 사건)
+    "vulnerability":            "취약성 직접 표현 — Step 5 (당신이 멀어질 때 나는 ~ 무서워요)",
+    "empathy":                  "상대에 대한 공감적 반응 — Step 6 (상대도 실망시키기 싫어서 숨었겠구나)",
+    "withdrawer_reengagement":  "철회자 재관여 — Step 7 (회피하던 파트너가 애착 욕구를 직접 표현하며 관계에 재참여)",
+    "blamer_softening":         "비난자 연화 — Step 7 (비난하던 파트너가 부드러워지며 취약성을 노출하고 도움을 요청)",
 }
 
 STAGE1_SIGNALS = ["emotion", "patternAware", "otherSide", "relationConcern"]
-STAGE2_SIGNALS = ["vulnerability", "empathy", "recoveryWill", "newComm"]
+STAGE2_SIGNALS = ["vulnerability", "empathy", "withdrawer_reengagement", "blamer_softening"]
 
 
 @dataclass
@@ -122,6 +122,10 @@ def build_stage_instruction(
         self_count  = sum(1 for k in keys if sig[k])
         other_count = sum(1 for k in keys if other_sig[k])
 
+        # 핵심 변화 사건 확인
+        has_reengagement = sig.get("withdrawer_reengagement", False) or other_sig.get("withdrawer_reengagement", False)
+        has_softening    = sig.get("blamer_softening", False) or other_sig.get("blamer_softening", False)
+
         if self_count == 0:
             current_step = 5
             step_desc = (
@@ -138,9 +142,10 @@ def build_stage_instruction(
         else:
             current_step = 7
             step_desc = (
-                "Step 7 [애착 욕구 표현 구조화]: 인액트먼트(Enactment) — 지금 이 자리에서 파트너에게 "
-                "애착 욕구를 직접 말하도록 구조화하십시오. "
-                "철회자 재관여(Withdrawer Re-engagement) + 비난자 연화(Blamer Softening)를 완성하십시오."
+                "Step 7 [애착 욕구 표현 구조화 — 핵심 변화 사건]: "
+                "인액트먼트(Enactment) — 지금 이 자리에서 파트너에게 애착 욕구를 직접 말하도록 구조화하십시오.\n"
+                f"  철회자 재관여(Withdrawer Re-engagement): {'확인됨' if has_reengagement else '미확인 — 회피하던 파트너가 관계에 재참여하도록 유도'}\n"
+                f"  비난자 연화(Blamer Softening): {'확인됨' if has_softening else '미확인 — 비난하던 파트너가 취약성을 드러내도록 유도'}"
             )
 
         missing       = [k for k in keys if not sig[k]]
@@ -209,11 +214,11 @@ def build_eval_prompt(
 전진 가능 여부: {"가능 — 아래 전진 신호 확인" if can_advance else "불가 — 누적 라운드 미충족, 현 단계 유지"}
 
 ▶ 1단계→2단계 전진: 별도 사이클 동의 절차로 관리됨. stage를 2로 올리지 마라 (코드가 직접 처리).
-▶ 2단계→3단계 전진 (여성·남성 양측 모두에서 아래 중 2가지 이상 확인 시, 전진 가능할 때만):
-    - 취약성 직접 표현: "당신이 멀어질 때 혼자가 되는 것 같아서 무서워요" 등
-    - 상대에 대한 연민: "걔도 나를 실망시키기 싫어서 숨었던 거구나" 등
-    - 관계 회복 의지: "우리가 달라질 수 있을 것 같아요", "다시 해보고 싶어요" 등
-    - 새로운 소통 시도 언급: "이번엔 화내기 전에 먼저 말해볼게요" 등
+▶ 2단계→3단계 전진 (여성·남성 양측 모두에서 아래 중 3가지 이상 확인 시, 전진 가능할 때만):
+    - 취약성 직접 표현 (Step 5): "당신이 멀어질 때 혼자가 되는 것 같아서 무서워요" 등
+    - 상대에 대한 공감적 반응 (Step 6): "걔도 나를 실망시키기 싫어서 숨었던 거구나" 등
+    - 철회자 재관여 (Step 7): 회피하던 파트너가 애착 욕구를 직접 표현하며 관계에 재참여
+    - 비난자 연화 (Step 7): 비난하던 파트너가 부드러워지며 취약성을 노출하고 도움을 요청
 ▶ 단계 후퇴 없음: stage는 현재 단계({eft_stage}) 이상의 값만 반환하라.
 ▶ 3단계 종료: 별도 동의 버튼으로 관리됨. readyForEnd는 항상 false.
 
@@ -234,8 +239,8 @@ def build_eval_prompt(
     "relationConcern": true또는false,
     "vulnerability": true또는false,
     "empathy": true또는false,
-    "recoveryWill": true또는false,
-    "newComm": true또는false
+    "withdrawer_reengagement": true또는false,
+    "blamer_softening": true또는false
   }},
   "m_signals": {{
     "emotion": true또는false,
@@ -244,14 +249,14 @@ def build_eval_prompt(
     "relationConcern": true또는false,
     "vulnerability": true또는false,
     "empathy": true또는false,
-    "recoveryWill": true또는false,
-    "newComm": true또는false
+    "withdrawer_reengagement": true또는false,
+    "blamer_softening": true또는false
   }}
 }}
 신호 판단: 누적 기준. 이전에 확인된 신호는 true 유지.
 현재까지 확인된 신호:
-여성: emotion={f_sigs['emotion']}, patternAware={f_sigs['patternAware']}, otherSide={f_sigs['otherSide']}, relationConcern={f_sigs['relationConcern']}, vulnerability={f_sigs['vulnerability']}, empathy={f_sigs['empathy']}, recoveryWill={f_sigs['recoveryWill']}, newComm={f_sigs['newComm']}
-남성: emotion={m_sigs['emotion']}, patternAware={m_sigs['patternAware']}, otherSide={m_sigs['otherSide']}, relationConcern={m_sigs['relationConcern']}, vulnerability={m_sigs['vulnerability']}, empathy={m_sigs['empathy']}, recoveryWill={m_sigs['recoveryWill']}, newComm={m_sigs['newComm']}
+여성: emotion={f_sigs['emotion']}, patternAware={f_sigs['patternAware']}, otherSide={f_sigs['otherSide']}, relationConcern={f_sigs['relationConcern']}, vulnerability={f_sigs['vulnerability']}, empathy={f_sigs['empathy']}, withdrawer_reengagement={f_sigs['withdrawer_reengagement']}, blamer_softening={f_sigs['blamer_softening']}
+남성: emotion={m_sigs['emotion']}, patternAware={m_sigs['patternAware']}, otherSide={m_sigs['otherSide']}, relationConcern={m_sigs['relationConcern']}, vulnerability={m_sigs['vulnerability']}, empathy={m_sigs['empathy']}, withdrawer_reengagement={m_sigs['withdrawer_reengagement']}, blamer_softening={m_sigs['blamer_softening']}
 
 커플 분류: {couple_combo}
 여성: {f_type} (불안 {f_anxiety:.2f}, 회피 {f_avoidance:.2f})

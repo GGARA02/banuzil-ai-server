@@ -9,7 +9,7 @@
 # 특징:
 # - f+m 동시 입력 → f+m 동시 출력 (asyncio.gather 병렬)
 # - 단계 후퇴 없음 (1→2: 사이클 동의, 2→3: 신호 기반, 3 종료: 양측 동의)
-# - risk_gate 하드코딩 키워드 기반
+# - risk_gate 하드코딩 키워드 기반 (감지해도 상담 계속, Spring이 처리)
 # - 총알잡기: bullet_detector 노드가 감지 → response_generator에 컨텍스트 주입
 # - KoELECTRA 결과: emotion_inject 노드에서 EmotionService 직접 임포트
 # - bullet_detector/self_refine/neutrality_check: DSPy 모듈 사용
@@ -133,7 +133,7 @@ _call_llm_with_history = call_llm_with_history
 
 # ================================================================
 # 노드 1: risk_gate — 하드코딩 위험 키워드 감지
-# LLM 없이 순수 키워드 매칭. 위험 감지 시 즉시 END.
+# LLM 없이 순수 키워드 매칭. 감지해도 상담은 계속 진행, Spring이 별도 처리.
 # ================================================================
 def node_risk_gate(state: EFTState) -> EFTState:
     f_reply = state.get("f_reply", "")
@@ -172,7 +172,10 @@ def node_risk_gate(state: EFTState) -> EFTState:
 
 
 def edge_risk_gate(state: EFTState) -> str:
-    return "END" if state["risk_flag"] else "bullet_detector"
+    # 위험 감지 여부와 무관하게 항상 상담 진행
+    # risk_flag/risk_category/risk_keywords_found는 state에 기록되어
+    # 최종 응답에 포함 → Spring이 별도 처리
+    return "bullet_detector"
 
 
 # ================================================================
@@ -603,10 +606,8 @@ def build_eft_graph() -> StateGraph:
 
     # 엣지 연결
     graph.set_entry_point("risk_gate")
-    graph.add_conditional_edges("risk_gate", edge_risk_gate, {
-        "END":             END,
-        "bullet_detector": "bullet_detector",
-    })
+    # risk_gate → 항상 bullet_detector (위험 감지해도 상담 계속, Spring이 risk_flag 처리)
+    graph.add_edge("risk_gate", "bullet_detector")
     graph.add_edge("bullet_detector",    "emotion_inject")
     graph.add_edge("emotion_inject",     "eft_stage_router")
     graph.add_edge("eft_stage_router",   "response_generator")

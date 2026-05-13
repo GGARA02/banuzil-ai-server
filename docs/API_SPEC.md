@@ -59,7 +59,7 @@ v2에서 AI 서버가 메모리에 세션 상태를 관리했으나, v3에서는
 
 | 응답 필드 | 값 | Spring 처리 |
 |-----------|-----|------------|
-| `risk_flag` | `true` | 상담 즉시 중단, 전문기관 연계 안내 |
+| `risk_flag` | `true` | 상담은 계속 진행됨. Spring이 위험 신호를 별도로 처리 (전문기관 연계 안내 등) |
 | `needs_cycle_definition` | `true` | `POST /ai/cycle` 호출 |
 | EFT 3단계 도달 + 양측 종료 동의 | (Spring DB 관리) | `POST /ai/report` 호출 |
 
@@ -147,8 +147,8 @@ v2에서 AI 서버가 메모리에 세션 상태를 관리했으나, v3에서는
   "stage_rounds": {"1": 1, "2": 0, "3": 0},
   "stage_progress": 35,
   "signals": {
-    "f": {"emotion": true, "patternAware": false, "otherSide": false, "relationConcern": true, "vulnerability": false, "empathy": false, "recoveryWill": false, "newComm": false},
-    "m": {"emotion": false, "patternAware": false, "otherSide": true, "relationConcern": false, "vulnerability": false, "empathy": false, "recoveryWill": false, "newComm": false}
+    "f": {"emotion": true, "patternAware": false, "otherSide": false, "relationConcern": true, "vulnerability": false, "empathy": false, "withdrawer_reengagement": false, "blamer_softening": false},
+    "m": {"emotion": false, "patternAware": false, "otherSide": true, "relationConcern": false, "vulnerability": false, "empathy": false, "withdrawer_reengagement": false, "blamer_softening": false}
   },
   "cycle_definition": ""
 }
@@ -168,7 +168,7 @@ v2에서 AI 서버가 메모리에 세션 상태를 관리했으나, v3에서는
 | `updated_f_history` | array | **DB에 저장할 여성 히스토리** (현재 라운드 포함) |
 | `updated_m_history` | array | **DB에 저장할 남성 히스토리** (현재 라운드 포함) |
 | `needs_cycle_definition` | boolean | `true`면 `/ai/cycle` 호출 필요 |
-| `risk_flag` | boolean | `true`면 위험 신호 — 즉시 상담 중단 |
+| `risk_flag` | boolean | `true`면 위험 신호 감지 — 상담은 계속 진행, Spring이 별도 처리 |
 | `risk_category` | string | 위험 유형 ("자해", "자살", "폭행" 등) |
 | `bullet_detected` | boolean | 총알잡기 감지 여부 |
 | `bullet_type` | string | `"Reactive"` / `"Mistrust"` / `"None"` |
@@ -192,8 +192,8 @@ v2에서 AI 서버가 메모리에 세션 상태를 관리했으나, v3에서는
   "updated_stage_rounds": {"1": 1, "2": 0, "3": 0},
   "updated_stage_progress": 35,
   "updated_signals": {
-    "f": {"emotion": true, "patternAware": false, "otherSide": false, "relationConcern": true, "vulnerability": false, "empathy": false, "recoveryWill": false, "newComm": false},
-    "m": {"emotion": false, "patternAware": false, "otherSide": true, "relationConcern": false, "vulnerability": false, "empathy": false, "recoveryWill": false, "newComm": false}
+    "f": {"emotion": true, "patternAware": false, "otherSide": false, "relationConcern": true, "vulnerability": false, "empathy": false, "withdrawer_reengagement": false, "blamer_softening": false},
+    "m": {"emotion": false, "patternAware": false, "otherSide": true, "relationConcern": false, "vulnerability": false, "empathy": false, "withdrawer_reengagement": false, "blamer_softening": false}
   },
   "updated_f_history": [
     {"role": "user", "content": "상담사님, 파트너한테 연락했는데..."},
@@ -221,24 +221,27 @@ v2에서 AI 서버가 메모리에 세션 상태를 관리했으나, v3에서는
 }
 ```
 
-### Response 예시 — 위험 감지
+### Response 예시 — 위험 감지 (상담은 계속 진행)
 
 ```json
 {
   "session_id": "550e8400-e29b-41d4-a716-446655440000",
-  "f_message": "지금 당신의 안전이 가장 중요합니다. 상담을 잠시 중단합니다.",
-  "m_message": "지금 당신의 안전이 가장 중요합니다. 상담을 잠시 중단합니다.",
+  "f_message": "지금 많이 힘드신 거군요. 그 마음이 느껴집니다...",
+  "m_message": "파트너가 많이 힘들어하고 있는 것 같습니다...",
   "updated_eft_stage": 1,
   "updated_stage_rounds": {"1": 1, "2": 0, "3": 0},
-  "updated_stage_progress": 0,
-  "updated_signals": {"f": {}, "m": {}},
+  "updated_stage_progress": 15,
+  "updated_signals": {"f": {"emotion": true}, "m": {}},
   "updated_f_history": [...],
   "updated_m_history": [...],
   "risk_flag": true,
   "risk_category": "자해",
-  "risk_keywords": ["손목", "긋"]
+  "risk_keywords": ["손목", "긋"],
+  "eval_score": 4.1
 }
 ```
+
+> **위험 감지 시 동작**: AI 서버는 위험 키워드를 감지해도 상담을 중단하지 않고 정상적인 상담 응답을 생성합니다. `risk_flag`, `risk_category`, `risk_keywords`를 통해 Spring에 위험 신호를 전달하며, Spring이 전문기관 연계 등 별도 조치를 수행해야 합니다.
 
 ### 에러
 

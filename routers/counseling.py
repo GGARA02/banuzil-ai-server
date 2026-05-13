@@ -108,23 +108,7 @@ async def round_analyze(req: RoundAnalyzeRequest):
         {"role": "assistant", "content": m_resp},
     ]
 
-    # 위험 감지 시
-    if result.get("risk_flag"):
-        return RoundAnalyzeResponse(
-            session_id             = req.session_id,
-            f_message              = "지금 당신의 안전이 가장 중요합니다. 상담을 잠시 중단합니다.",
-            m_message              = "지금 당신의 안전이 가장 중요합니다. 상담을 잠시 중단합니다.",
-            updated_eft_stage      = req.eft_stage,
-            updated_stage_rounds   = req.stage_rounds,
-            updated_stage_progress = req.stage_progress,
-            updated_signals        = _signals_to_dict(signals),
-            updated_f_history      = updated_f_history,
-            updated_m_history      = updated_m_history,
-            risk_flag              = True,
-            risk_category          = result.get("risk_category", ""),
-            risk_keywords          = result.get("risk_keywords_found", []),
-        )
-
+    # 위험 감지 시에도 상담 계속 진행 — risk_flag만 응답에 포함하여 Spring이 별도 처리
     updated_signals = result.get("signals", signals)
     eval_scores     = result.get("eval_scores") or {}
     nr              = result.get("neutrality_result") or {}
@@ -155,6 +139,8 @@ async def round_analyze(req: RoundAnalyzeRequest):
         neutrality_result        = neutrality_for_spring,
         f_emotion                = result.get("f_emotion_data"),
         m_emotion                = result.get("m_emotion_data"),
+        risk_flag                = result.get("risk_flag", False),
+        risk_category            = result.get("risk_category", ""),
         risk_keywords            = result.get("risk_keywords_found", []),
     )
 
