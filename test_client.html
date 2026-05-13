@@ -793,31 +793,9 @@ async function typeText(elId, text, delayPerChar = 18) {
   }
 }
 
-async function generateUtterances(round) {
+async function callGpt(systemPrompt, userMsg) {
   const apiKey = document.getElementById('openaiKey').value.trim();
   if (!apiKey) throw new Error('OpenAI API Key를 입력하세요.');
-
-  // 최근 히스토리 컨텍스트 (최대 6개 발화)
-  const fCtx = STATE.fHistory.slice(-6).map(h => `${h.role === 'user' ? '여성' : '상담AI'}: ${h.content}`).join('\n');
-  const mCtx = STATE.mHistory.slice(-6).map(h => `${h.role === 'user' ? '남성' : '상담AI'}: ${h.content}`).join('\n');
-
-  const systemPrompt = `당신은 커플 상담 시나리오 테스터입니다.
-다음 커플의 발화를 한 라운드씩 생성하세요.
-
-[여성 프로필] ECR-R 불안 ${STATE.fAnxiety}/회피 ${STATE.fAvoidance}, MBTI ${STATE.fMbti}
-- 불안형: 연락·확인 추구, 버림받음 두려움, 감정 표현이 직접적
-[남성 프로필] ECR-R 불안 ${STATE.mAnxiety}/회피 ${STATE.mAvoidance}, MBTI ${STATE.mMbti}
-- 회피형: 감정 표현 어려움, 압도되면 물러남, 말보다 행동
-
-현재 EFT ${STATE.eftStage}단계, 라운드 ${round}.
-자연스럽고 사실적인 커플 갈등/회복 흐름으로 생성하세요.
-각 발화는 1~3문장, 구어체.
-
-반드시 JSON으로만 응답: {"f": "여성 발화", "m": "남성 발화"}`;
-
-  const userMsg = round === 1
-    ? '첫 라운드입니다. 연락 문제로 갈등이 시작되는 상황으로 시작하세요.'
-    : `라운드 ${round}입니다.\n[여성 대화]\n${fCtx || '(없음)'}\n\n[남성 대화]\n${mCtx || '(없음)'}`;
 
   const res = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
@@ -844,6 +822,56 @@ async function generateUtterances(round) {
 
   const data = await res.json();
   return JSON.parse(data.choices[0].message.content);
+}
+
+async function generateUtterances(round) {
+  // ── 공통 프로필 설명 ──────────────────────────────────────
+  const fProfile = `[여성] ECR-R 불안${STATE.fAnxiety}/회피${STATE.fAvoidance}, ${STATE.fMbti} — 불안애착: 연락·확인 추구, 버림받음 두려움, 감정 직접 표현`;
+  const mProfile = `[남성] ECR-R 불안${STATE.mAnxiety}/회피${STATE.mAvoidance}, ${STATE.mMbti} — 회피애착: 감정 표현 어려움, 압도되면 물러남`;
+  const stageNote = `현재 EFT ${STATE.eftStage}단계`;
+
+  // ── 1라운드: 각자 처한 상황 소개 ────────────────────────
+  if (round === 1) {
+    const sys = `당신은 커플 상담 시나리오 테스터입니다.
+${fProfile}
+${mProfile}
+${stageNote}
+
+두 사람이 상담에 처음 와서 각자 자신이 겪고 있는 상황을 상담사에게 처음으로 말하는 장면입니다.
+서로 대화하는 게 아니라 각자 상담사에게 이야기하는 것입니다.
+각 발화는 2~4문장, 구어체. 반드시 JSON: {"f": "여성 발화", "m": "남성 발화"}`;
+
+    return await callGpt(sys, '첫 상담입니다. 연락 갈등 상황으로 각자 상황을 소개하세요.');
+  }
+
+  // ── 2라운드~: 각자 자신에게 온 AI 상담사 메시지에만 반응 ─
+  // 마지막 상담사 메시지 추출
+  const lastFAI = [...STATE.fHistory].reverse().find(h => h.role === 'assistant')?.content || '';
+  const lastMAI = [...STATE.mHistory].reverse().find(h => h.role === 'assistant')?.content || '';
+
+  // 여성 발화 생성
+  const fSys = `당신은 커플 상담 테스터입니다. 아래 여성 내담자 역할을 하세요.
+${fProfile}
+${stageNote}, 라운드 ${round}.
+
+상담사의 말에 자연스럽게 반응하세요. 자신의 감정·생각을 솔직하게 표현하되
+불안형 애착 특성(확인 추구, 감정 직접 표현)이 드러나게 하세요.
+1~3문장, 구어체. 반드시 JSON: {"f": "여성 발화"}`;
+
+  const mSys = `당신은 커플 상담 테스터입니다. 아래 남성 내담자 역할을 하세요.
+${mProfile}
+${stageNote}, 라운드 ${round}.
+
+상담사의 말에 자연스럽게 반응하세요. 회피형 애착 특성(말수 적음, 감정 돌려 표현, 논리적)이
+드러나게 하세요.
+1~3문장, 구어체. 반드시 JSON: {"m": "남성 발화"}`;
+
+  const [fRes, mRes] = await Promise.all([
+    callGpt(fSys, `상담사가 나에게 한 말: "${lastFAI}"\n이에 대한 나의 반응을 작성하세요.`),
+    callGpt(mSys, `상담사가 나에게 한 말: "${lastMAI}"\n이에 대한 나의 반응을 작성하세요.`),
+  ]);
+
+  return { f: fRes.f, m: mRes.m };
 }
 
 async function runAutoTest() {
