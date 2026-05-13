@@ -173,6 +173,19 @@
         <button class="btn-primary" onclick="initSession()">세션 시작</button>
       </div>
       <div id="sessionInfo" class="info-card hidden"></div>
+      <!-- 자동 테스트 -->
+      <div>
+        <div style="font-size:11px;font-weight:600;margin-bottom:5px;">자동 테스트 (GPT-4o-mini)</div>
+        <label>OpenAI API Key</label>
+        <input type="text" id="openaiKey" placeholder="sk-..." style="font-family:'JetBrains Mono',monospace;font-size:11px;">
+        <div class="row2" style="margin-top:5px;">
+          <div><label>라운드 수</label><input type="number" id="autoRounds" value="6" min="2" max="20"></div>
+          <div><label>딜레이(ms)</label><input type="number" id="autoDelay" value="800" min="200" max="3000" step="100"></div>
+        </div>
+        <button class="btn-primary" id="autoTestBtn" onclick="runAutoTest()" style="background:#6a1b9a;margin-top:6px;">자동 테스트 실행</button>
+        <button class="btn-outline hidden" id="autoStopBtn" onclick="stopAutoTest()" style="font-size:11px;margin-top:4px;">중단</button>
+        <div id="autoStatus" style="font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--muted);margin-top:5px;min-height:16px;"></div>
+      </div>
       <div>
         <div style="font-size:11px;font-weight:600;margin-bottom:5px;">디버그</div>
         <div style="display:flex;flex-direction:column;gap:4px;">
@@ -750,6 +763,189 @@ function fillExample() {
 }
 
 document.addEventListener('keydown', e => { if (e.ctrlKey && e.key === 'Enter') sendRound(); });
+
+// ================================================================
+// 자동 테스트 — GPT-4o-mini가 커플 역할 수행
+// ================================================================
+let AUTO = { running: false, stop: false };
+
+function setAutoStatus(msg) {
+  document.getElementById('autoStatus').textContent = msg;
+}
+
+function stopAutoTest() {
+  AUTO.stop = true;
+  setAutoStatus('중단 요청...');
+}
+
+async function sleep(ms) {
+  return new Promise(r => setTimeout(r, ms));
+}
+
+async function typeText(elId, text, delayPerChar = 18) {
+  const el = document.getElementById(elId);
+  el.value = '';
+  for (const ch of text) {
+    if (AUTO.stop) return;
+    el.value += ch;
+    updateCharCount();
+    await sleep(delayPerChar);
+  }
+}
+
+async function generateUtterances(round) {
+  const apiKey = document.getElementById('openaiKey').value.trim();
+  if (!apiKey) throw new Error('OpenAI API Key를 입력하세요.');
+
+  // 최근 히스토리 컨텍스트 (최대 6개 발화)
+  const fCtx = STATE.fHistory.slice(-6).map(h => `${h.role === 'user' ? '여성' : '상담AI'}: ${h.content}`).join('\n');
+  const mCtx = STATE.mHistory.slice(-6).map(h => `${h.role === 'user' ? '남성' : '상담AI'}: ${h.content}`).join('\n');
+
+  const systemPrompt = `당신은 커플 상담 시나리오 테스터입니다.
+다음 커플의 발화를 한 라운드씩 생성하세요.
+
+[여성 프로필] ECR-R 불안 ${STATE.fAnxiety}/회피 ${STATE.fAvoidance}, MBTI ${STATE.fMbti}
+- 불안형: 연락·확인 추구, 버림받음 두려움, 감정 표현이 직접적
+[남성 프로필] ECR-R 불안 ${STATE.mAnxiety}/회피 ${STATE.mAvoidance}, MBTI ${STATE.mMbti}
+- 회피형: 감정 표현 어려움, 압도되면 물러남, 말보다 행동
+
+현재 EFT ${STATE.eftStage}단계, 라운드 ${round}.
+자연스럽고 사실적인 커플 갈등/회복 흐름으로 생성하세요.
+각 발화는 1~3문장, 구어체.
+
+반드시 JSON으로만 응답: {"f": "여성 발화", "m": "남성 발화"}`;
+
+  const userMsg = round === 1
+    ? '첫 라운드입니다. 연락 문제로 갈등이 시작되는 상황으로 시작하세요.'
+    : `라운드 ${round}입니다.\n[여성 대화]\n${fCtx || '(없음)'}\n\n[남성 대화]\n${mCtx || '(없음)'}`;
+
+  const res = await fetch('https://api.openai.com/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model: 'gpt-4o-mini',
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user',   content: userMsg },
+      ],
+      response_format: { type: 'json_object' },
+      max_tokens: 300,
+      temperature: 0.85,
+    }),
+  });
+
+  if (!res.ok) {
+    const err = await res.json();
+    throw new Error(`OpenAI 오류: ${err.error?.message || res.statusText}`);
+  }
+
+  const data = await res.json();
+  return JSON.parse(data.choices[0].message.content);
+}
+
+async function runAutoTest() {
+  if (AUTO.running) return;
+  if (!document.getElementById('openaiKey').value.trim()) {
+    return alert('OpenAI API Key를 입력하세요.');
+  }
+
+  // 세션 자동 시작
+  if (!STATE.active) {
+    initSession();
+    await sleep(300);
+  }
+
+  const totalRounds = parseInt(document.getElementById('autoRounds').value) || 6;
+  const delay       = parseInt(document.getElementById('autoDelay').value)  || 800;
+
+  AUTO.running = true;
+  AUTO.stop    = false;
+  document.getElementById('autoTestBtn').disabled = true;
+  document.getElementById('autoStopBtn').classList.remove('hidden');
+  addSys(`자동 테스트 시작 (${totalRounds}라운드, GPT-4o-mini)`);
+  log('inf', `자동 테스트 시작 — ${totalRounds}라운드`);
+
+  try {
+    for (let r = 1; r <= totalRounds; r++) {
+      if (AUTO.stop) { addSys('자동 테스트 중단됨'); break; }
+
+      setAutoStatus(`[${r}/${totalRounds}] 발화 생성 중...`);
+
+      // GPT로 발화 생성
+      let utterances;
+      try {
+        utterances = await generateUtterances(r);
+      } catch (e) {
+        addSys(`발화 생성 실패: ${e.message}`);
+        log('err', e.message);
+        break;
+      }
+
+      if (AUTO.stop) break;
+      setAutoStatus(`[${r}/${totalRounds}] 입력 중...`);
+
+      // 텍스트 타이핑 (여성/남성 동시)
+      await Promise.all([
+        typeText('fReply', utterances.f),
+        typeText('mReply', utterances.m),
+      ]);
+
+      if (AUTO.stop) break;
+      await sleep(delay);
+
+      setAutoStatus(`[${r}/${totalRounds}] 전송 중...`);
+
+      // 전송
+      await sendRound();
+
+      // sendRound 완료 대기 (busy 풀릴 때까지)
+      let waited = 0;
+      while (STATE.busy && waited < 30000) {
+        await sleep(200); waited += 200;
+      }
+
+      if (AUTO.stop) break;
+
+      // 사이클 자동 처리
+      if (STATE.eftStage === 1 && STATE.stageProgress >= 60 && !STATE.cycleDefinition) {
+        // needs_cycle_definition은 sendRound에서 이미 showCycleExplore를 호출했을 수 있음
+        // 탐색 -> 정의 -> 동의 자동 처리
+        const cycleBox = document.getElementById('cycleBox');
+        if (!cycleBox.classList.contains('hidden')) {
+          setAutoStatus(`[${r}/${totalRounds}] 사이클 정의 생성 중...`);
+          await sleep(delay);
+          await generateCycleDef();
+          await sleep(delay * 1.5);
+
+          if (AUTO.stop) break;
+          setAutoStatus(`[${r}/${totalRounds}] 사이클 동의 처리...`);
+          await sleep(delay);
+          agreeAllCycle();
+          addSys('[자동] 사이클 동의 완료 -> 2단계 진입');
+          await sleep(delay);
+        }
+      }
+
+      await sleep(delay);
+    }
+
+    if (!AUTO.stop) {
+      setAutoStatus('완료! 보고서 생성 중...');
+      await sleep(delay);
+      addSys('자동 테스트 완료 — 보고서 생성');
+      await triggerReport();
+      setAutoStatus('자동 테스트 완료');
+    }
+
+  } finally {
+    AUTO.running = false;
+    document.getElementById('autoTestBtn').disabled = false;
+    document.getElementById('autoStopBtn').classList.add('hidden');
+  }
+}
 
 // 초기화
 setDot('');
