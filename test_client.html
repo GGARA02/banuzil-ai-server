@@ -511,6 +511,7 @@ async function sendRound() {
     STATE.signals       = data.updated_signals        ?? STATE.signals;
     STATE.fHistory      = data.updated_f_history      ?? STATE.fHistory;
     STATE.mHistory      = data.updated_m_history      ?? STATE.mHistory;
+    STATE.lastNeedsCycle = !!data.needs_cycle_definition;
 
     // 분석 패널 업데이트
     updateEmotionPanel(data);
@@ -782,15 +783,10 @@ async function sleep(ms) {
   return new Promise(r => setTimeout(r, ms));
 }
 
-async function typeText(elId, text, delayPerChar = 18) {
+function typeText(elId, text) {
   const el = document.getElementById(elId);
-  el.value = '';
-  for (const ch of text) {
-    if (AUTO.stop) return;
-    el.value += ch;
-    updateCharCount();
-    await sleep(delayPerChar);
-  }
+  el.value = text;
+  updateCharCount();
 }
 
 async function callGpt(systemPrompt, userMsg) {
@@ -915,11 +911,9 @@ async function runAutoTest() {
       if (AUTO.stop) break;
       setAutoStatus(`[${r}/${totalRounds}] 입력 중...`);
 
-      // 텍스트 타이핑 (여성/남성 동시)
-      await Promise.all([
-        typeText('fReply', utterances.f),
-        typeText('mReply', utterances.m),
-      ]);
+      // 텍스트 입력
+      typeText('fReply', utterances.f);
+      typeText('mReply', utterances.m);
 
       if (AUTO.stop) break;
       await sleep(delay);
@@ -937,33 +931,49 @@ async function runAutoTest() {
 
       if (AUTO.stop) break;
 
-      // 사이클 자동 처리
-      if (STATE.eftStage === 1 && STATE.stageProgress >= 60 && !STATE.cycleDefinition) {
-        // needs_cycle_definition은 sendRound에서 이미 showCycleExplore를 호출했을 수 있음
-        // 탐색 -> 정의 -> 동의 자동 처리
-        const cycleBox = document.getElementById('cycleBox');
-        if (!cycleBox.classList.contains('hidden')) {
-          setAutoStatus(`[${r}/${totalRounds}] 사이클 정의 생성 중...`);
-          await sleep(delay);
-          await generateCycleDef();
-          await sleep(delay * 1.5);
+      // 사이클 자동 처리 — needs_cycle_definition 플래그 기준
+      if (STATE.lastNeedsCycle) {
+        STATE.lastNeedsCycle = false;
 
-          if (AUTO.stop) break;
-          setAutoStatus(`[${r}/${totalRounds}] 사이클 동의 처리...`);
-          await sleep(delay);
-          agreeAllCycle();
-          addSys('[자동] 사이클 동의 완료 -> 2단계 진입');
-          await sleep(delay);
+        // sendRound에서 이미 showCycleExplore() 호출됨 (탐색 질문 표시)
+        setAutoStatus(`[${r}/${totalRounds}] 사이클 탐색 질문 수신됨, 대기 중...`);
+        await sleep(delay * 1.5);
+        if (AUTO.stop) break;
+
+        // 사이클 정의 생성
+        setAutoStatus(`[${r}/${totalRounds}] 사이클 정의 생성 중...`);
+        await generateCycleDef();
+
+        // generateCycleDef 완료 대기 (cycle_definition이 STATE에 저장될 때까지)
+        let waited = 0;
+        while (!STATE.cycleDefinition && waited < 15000) {
+          await sleep(300); waited += 300;
         }
+        await sleep(delay);
+        if (AUTO.stop) break;
+
+        // 양측 동의
+        setAutoStatus(`[${r}/${totalRounds}] 양측 사이클 동의 처리...`);
+        agreeAllCycle();
+        addSys('[자동] 사이클 동의 완료 -> 2단계 진입');
+        await sleep(delay);
       }
 
       await sleep(delay);
+
+      // 3단계 종료 감지 — stageProgress 90 이상이면 자동 종료 동의
+      if (STATE.eftStage === 3 && STATE.stageProgress >= 90) {
+        setAutoStatus(`[${r}/${totalRounds}] 3단계 완료 감지 — 종료 동의 처리...`);
+        addSys('[자동] EFT 3단계 완료 — 양측 종료 동의 처리');
+        await sleep(delay);
+        break;
+      }
     }
 
     if (!AUTO.stop) {
-      setAutoStatus('완료! 보고서 생성 중...');
+      setAutoStatus('보고서 생성 중...');
       await sleep(delay);
-      addSys('자동 테스트 완료 — 보고서 생성');
+      addSys('자동 테스트 완료 — 최종 보고서 생성');
       await triggerReport();
       setAutoStatus('자동 테스트 완료');
     }
