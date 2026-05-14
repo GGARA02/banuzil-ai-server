@@ -10,6 +10,7 @@ from fastapi.responses import FileResponse
 import os
 
 from routers import emotion, counseling
+from services.supabase_client import supa
 
 app = FastAPI(
     title       = "바느질 AI 서버",
@@ -33,6 +34,13 @@ app.include_router(counseling.router)
 async def test_client():
     path = os.path.join(os.path.dirname(__file__), "test_client.html")
     return FileResponse(path)
+
+@app.get("/health/supabase")
+async def supabase_health():
+    """Supabase 연결 상태 확인"""
+    ok = await supa.ping()
+    return {"supabase": "connected" if ok else "error"}
+
 
 @app.get("/")
 async def root():

@@ -67,6 +67,10 @@ RISK_DETECTION_THRESHOLD: float = float(os.getenv("RISK_DETECTION_THRESHOLD","0.
 # 공포회피형 결합 시 임계값 (더 민감하게)
 RISK_DETECTION_THRESHOLD_IPV: float = float(os.getenv("RISK_DETECTION_THRESHOLD_IPV","0.70"))
 
+# ── Supabase ─────────────────────────────────────────────
+SUPABASE_URL: str = os.getenv("SUPABASE_URL", "")
+SUPABASE_KEY: str = os.getenv("SUPABASE_KEY", "")
+
 # ── Spring 서버 연동 ──────────────────────────────────────
 SPRING_BASE_URL: str = os.getenv("SPRING_BASE_URL","http://localhost:8080")
 
