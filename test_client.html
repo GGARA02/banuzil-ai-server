@@ -865,7 +865,7 @@ async function callGpt(systemPrompt, userMsg) {
         { role: 'user',   content: userMsg },
       ],
       response_format: { type: 'json_object' },
-      max_tokens: 300,
+      max_completion_tokens: 300,
       temperature: 0.85,
     }),
   });
