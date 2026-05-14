@@ -670,7 +670,7 @@ def create_initial_state(
         couple_profile      = couple_profile,
         model_name          = model_name or MODEL_NAME,
         max_output_tokens   = max_output_tokens or MAX_OUTPUT_TOKENS,
-        max_refine          = max_refine or MAX_REFINE,
+        max_refine          = max_refine if max_refine is not None else MAX_REFINE,
         bullet_enabled      = bullet_enabled if bullet_enabled is not None else BULLET_DETECTION_ENABLED,
         bullet_threshold    = bullet_threshold or BULLET_THRESHOLD,
         emotion_weight      = emotion_weight or EMOTION_WEIGHT,
