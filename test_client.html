@@ -35,8 +35,8 @@
   .panel-body{padding:12px 14px;display:flex;flex-direction:column;gap:10px;}
   label{display:block;font-size:11px;color:var(--text2);margin-bottom:2px;margin-top:5px;}
   label:first-child{margin-top:0;}
-  input[type=text],input[type=number],textarea{width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);padding:6px 9px;font-size:12px;font-family:inherit;outline:none;transition:border-color .15s;}
-  input:focus,textarea:focus{border-color:#90a4ae;}
+  input[type=text],input[type=number],textarea,select{width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);padding:6px 9px;font-size:12px;font-family:inherit;outline:none;transition:border-color .15s;}
+  input:focus,textarea:focus,select:focus{border-color:#90a4ae;}
   textarea{resize:vertical;min-height:50px;}
   .row2{display:grid;grid-template-columns:1fr 1fr;gap:7px;}
   button{cursor:pointer;border:1px solid transparent;border-radius:var(--radius);font-family:inherit;font-size:12px;font-weight:500;padding:7px 12px;transition:opacity .15s;}
@@ -193,9 +193,22 @@
       </div>
       <!-- 자동 테스트 -->
       <div>
-        <div style="font-size:11px;font-weight:600;margin-bottom:5px;">자동 테스트 (GPT-4o-mini)</div>
+        <div style="font-size:11px;font-weight:600;margin-bottom:5px;">자동 테스트</div>
         <label>OpenAI API Key</label>
         <input type="text" id="openaiKey" placeholder="sk-..." style="font-family:'JetBrains Mono',monospace;font-size:11px;">
+        <label style="margin-top:5px;">발화 생성 모델</label>
+        <select id="autoModel">
+          <option value="gpt-4o-mini">gpt-4o-mini (빠름·저렴)</option>
+          <option value="gpt-5.4">gpt-5.4 (고품질)</option>
+        </select>
+        <label style="margin-top:5px;">시나리오</label>
+        <select id="autoScenario">
+          <option value="contact">연락 갈등 (기본)</option>
+          <option value="japan">일본 여행 계획</option>
+          <option value="exam">시험 스트레스</option>
+          <option value="housework">집안일 분담</option>
+          <option value="friends">친구 모임 우선순위</option>
+        </select>
         <div class="row2" style="margin-top:5px;">
           <div><label>라운드 수</label><input type="number" id="autoRounds" value="6" min="2" max="20"></div>
           <div><label>딜레이(ms)</label><input type="number" id="autoDelay" value="800" min="200" max="3000" step="100"></div>
@@ -783,9 +796,37 @@ function fillExample() {
 document.addEventListener('keydown', e => { if (e.ctrlKey && e.key === 'Enter') sendRound(); });
 
 // ================================================================
-// 자동 테스트 — GPT-4o-mini가 커플 역할 수행
+// 자동 테스트 — GPT가 커플 역할 수행
 // ================================================================
 let AUTO = { running: false, stop: false };
+
+const SCENARIOS = {
+  contact: {
+    label: '연락 갈등',
+    context: '여성은 남성이 연락을 잘 안 해줘서 무시받는 기분이고, 남성은 바쁠 때 연락을 못 하는 게 당연하다고 느낌.',
+    round1Prompt: '연락이 잘 안 됐던 상황으로 각자 상담사에게 처음으로 상황을 털어놓으세요.',
+  },
+  japan: {
+    label: '일본 여행 계획',
+    context: '여성은 커플 여행으로 일본에 함께 가고 싶었는데, 남성이 친구들과 일정을 먼저 잡아버려서 서운함이 쌓임.',
+    round1Prompt: '일본 여행 계획을 두고 의견이 충돌한 상황으로 각자 상담사에게 처음으로 상황을 털어놓으세요.',
+  },
+  exam: {
+    label: '시험 스트레스',
+    context: '여성이 중요한 시험을 앞두고 극도로 예민하고 힘든데, 남성이 충분히 곁에 있어 주지 않는다는 느낌. 남성은 무엇을 어떻게 해줘야 할지 모르겠다고 느낌.',
+    round1Prompt: '시험을 앞두고 서로에게 서운함이 쌓인 상황으로 각자 상담사에게 처음으로 상황을 털어놓으세요.',
+  },
+  housework: {
+    label: '집안일 분담',
+    context: '동거 중인 커플로, 여성은 집안일을 혼자 다 하는 것 같아 지치고 억울함. 남성은 자기도 나름대로 하고 있다고 생각해 답답함.',
+    round1Prompt: '집안일 분담 불균형으로 쌓인 갈등으로 각자 상담사에게 처음으로 상황을 털어놓으세요.',
+  },
+  friends: {
+    label: '친구 모임 우선순위',
+    context: '남성이 커플 약속을 취소하고 친구 모임에 갔고, 여성은 자신이 우선순위가 아닌 것 같아 서운함. 남성은 친구도 중요하고 여성이 너무 예민하다고 느낌.',
+    round1Prompt: '남성이 커플 약속을 취소하고 친구 모임에 간 일로 갈등이 생긴 상황으로 각자 상담사에게 처음으로 상황을 털어놓으세요.',
+  },
+};
 
 function setAutoStatus(msg) {
   document.getElementById('autoStatus').textContent = msg;
@@ -809,6 +850,7 @@ function typeText(elId, text) {
 async function callGpt(systemPrompt, userMsg) {
   const apiKey = document.getElementById('openaiKey').value.trim();
   if (!apiKey) throw new Error('OpenAI API Key를 입력하세요.');
+  const model = document.getElementById('autoModel').value || 'gpt-4o-mini';
 
   const res = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
@@ -817,7 +859,7 @@ async function callGpt(systemPrompt, userMsg) {
       'Authorization': `Bearer ${apiKey}`,
     },
     body: JSON.stringify({
-      model: 'gpt-4o-mini',
+      model,
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user',   content: userMsg },
@@ -838,10 +880,15 @@ async function callGpt(systemPrompt, userMsg) {
 }
 
 async function generateUtterances(round) {
+  // ── 시나리오 선택 ─────────────────────────────────────────
+  const scenarioKey = document.getElementById('autoScenario').value || 'contact';
+  const scenario    = SCENARIOS[scenarioKey];
+
   // ── 공통 프로필 설명 ──────────────────────────────────────
-  const fProfile = `[여성] ECR-R 불안${STATE.fAnxiety}/회피${STATE.fAvoidance}, ${STATE.fMbti} — 불안애착: 연락·확인 추구, 버림받음 두려움, 감정 직접 표현`;
+  const fProfile = `[여성] ECR-R 불안${STATE.fAnxiety}/회피${STATE.fAvoidance}, ${STATE.fMbti} — 불안애착: 확인·연락 추구, 버림받음 두려움, 감정 직접 표현`;
   const mProfile = `[남성] ECR-R 불안${STATE.mAnxiety}/회피${STATE.mAvoidance}, ${STATE.mMbti} — 회피애착: 감정 표현 어려움, 압도되면 물러남`;
   const stageNote = `현재 EFT ${STATE.eftStage}단계`;
+  const scenarioCtx = `[갈등 배경] ${scenario.context}`;
 
   // ── 1라운드: 각자 처한 상황 소개 ────────────────────────
   if (round === 1) {
@@ -849,23 +896,23 @@ async function generateUtterances(round) {
 ${fProfile}
 ${mProfile}
 ${stageNote}
+${scenarioCtx}
 
 두 사람이 상담에 처음 와서 각자 자신이 겪고 있는 상황을 상담사에게 처음으로 말하는 장면입니다.
 서로 대화하는 게 아니라 각자 상담사에게 이야기하는 것입니다.
-각 발화는 2~4문장, 구어체. 반드시 JSON: {"f": "여성 발화", "m": "남성 발화"}`;
+각 발화는 2~4문장, 구어체로 자연스럽게. 반드시 JSON: {"f": "여성 발화", "m": "남성 발화"}`;
 
-    return await callGpt(sys, '첫 상담입니다. 연락 갈등 상황으로 각자 상황을 소개하세요.');
+    return await callGpt(sys, scenario.round1Prompt);
   }
 
   // ── 2라운드~: 각자 자신에게 온 AI 상담사 메시지에만 반응 ─
-  // 마지막 상담사 메시지 추출
   const lastFAI = [...STATE.fHistory].reverse().find(h => h.role === 'assistant')?.content || '';
   const lastMAI = [...STATE.mHistory].reverse().find(h => h.role === 'assistant')?.content || '';
 
-  // 여성 발화 생성
   const fSys = `당신은 커플 상담 테스터입니다. 아래 여성 내담자 역할을 하세요.
 ${fProfile}
 ${stageNote}, 라운드 ${round}.
+${scenarioCtx}
 
 상담사의 말에 자연스럽게 반응하세요. 자신의 감정·생각을 솔직하게 표현하되
 불안형 애착 특성(확인 추구, 감정 직접 표현)이 드러나게 하세요.
@@ -874,6 +921,7 @@ ${stageNote}, 라운드 ${round}.
   const mSys = `당신은 커플 상담 테스터입니다. 아래 남성 내담자 역할을 하세요.
 ${mProfile}
 ${stageNote}, 라운드 ${round}.
+${scenarioCtx}
 
 상담사의 말에 자연스럽게 반응하세요. 회피형 애착 특성(말수 적음, 감정 돌려 표현, 논리적)이
 드러나게 하세요.
@@ -902,12 +950,15 @@ async function runAutoTest() {
   const totalRounds = parseInt(document.getElementById('autoRounds').value) || 6;
   const delay       = parseInt(document.getElementById('autoDelay').value)  || 800;
 
+  const selectedModel    = document.getElementById('autoModel').value || 'gpt-4o-mini';
+  const selectedScenario = SCENARIOS[document.getElementById('autoScenario').value] || SCENARIOS.contact;
+
   AUTO.running = true;
   AUTO.stop    = false;
   document.getElementById('autoTestBtn').disabled = true;
   document.getElementById('autoStopBtn').classList.remove('hidden');
-  addSys(`자동 테스트 시작 (${totalRounds}라운드, GPT-4o-mini)`);
-  log('inf', `자동 테스트 시작 — ${totalRounds}라운드`);
+  addSys(`자동 테스트 시작 (${totalRounds}라운드, ${selectedModel}, 시나리오: ${selectedScenario.label})`);
+  log('inf', `자동 테스트 시작 — ${totalRounds}라운드 / ${selectedModel} / ${selectedScenario.label}`);
 
   try {
     for (let r = 1; r <= totalRounds; r++) {
