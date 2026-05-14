@@ -328,14 +328,15 @@ async def node_response_generator(state: EFTState) -> EFTState:
     )
 
     # 단계 지침
-    f_stage_instruction = build_stage_instruction(True,  stage, signals)
-    m_stage_instruction = build_stage_instruction(False, stage, signals)
+    f_stage_instruction = build_stage_instruction(True,  stage, signals, round_num=round_num)
+    m_stage_instruction = build_stage_instruction(False, stage, signals, round_num=round_num)
 
-    # 파트너 마지막 발화
+    # 파트너 발화: 이번 라운드의 실제 발화를 사용 (상대방 말 전달용)
     f_hist = state.get("f_history", [])
     m_hist = state.get("m_history", [])
-    last_m_reply = next((h["content"] for h in reversed(m_hist) if h["role"] == "user"), "")
-    last_f_reply = next((h["content"] for h in reversed(f_hist) if h["role"] == "user"), "")
+    # 이번 라운드 파트너 발화 (매 라운드 상대방의 실제 말을 전달)
+    partner_reply_for_f = state.get("m_reply", "")  # 남성 발화 → 여성에게 전달
+    partner_reply_for_m = state.get("f_reply", "")  # 여성 발화 → 남성에게 전달
 
     # refine 피드백 있으면 stage_instruction에 추가
     refine_fb = state.get("refine_feedback", "")
@@ -356,14 +357,16 @@ async def node_response_generator(state: EFTState) -> EFTState:
         is_female           = True,
         round_num           = round_num,
         is_stage_first      = is_stage_first,
-        partner_last_reply  = last_m_reply,
+        partner_last_reply  = partner_reply_for_f,
+        self_reply          = state.get("f_reply", ""),
         stage_instruction   = f_stage_instruction,
     )
     m_user_msg = build_user_message(
         is_female           = False,
         round_num           = round_num,
         is_stage_first      = is_stage_first,
-        partner_last_reply  = last_f_reply,
+        partner_last_reply  = partner_reply_for_m,
+        self_reply          = state.get("m_reply", ""),
         stage_instruction   = m_stage_instruction,
     )
 

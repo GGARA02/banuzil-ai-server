@@ -31,6 +31,12 @@ TIER_RANGE_OFFSET: float = float(os.getenv("TIER_RANGE_OFFSET","1.5"))
 # ── MBTI 반영 비중 ─────────────────────────────────────────
 MBTI_WEIGHT: float = float(os.getenv("MBTI_WEIGHT","0.2"))             # 0~1, 기본 낮게 유지
 
+# ── 애착 분류 프롬프트 반영 강도 ──────────────────────────────
+# 0.0: 32분류/개입지침 프롬프트에서 완전 제거
+# 0.5: 요약본만 삽입
+# 1.0: 전체 삽입 (기존 동작)
+ATTACHMENT_PROMPT_WEIGHT: float = float(os.getenv("ATTACHMENT_PROMPT_WEIGHT","0.5"))
+
 # ── KoELECTRA 감성 AI 반영 설정 ──────────────────────────────
 EMOTION_WEIGHT: float = float(os.getenv("EMOTION_WEIGHT","0.3"))       # 감성 결과 프롬프트 반영 강도
 

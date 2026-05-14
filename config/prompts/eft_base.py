@@ -7,7 +7,7 @@
 from config.attachment_weight import (
     CoupleProfile, FEARFUL, ANXIOUS, DISMISSING, SECURE
 )
-from config.settings import MBTI_WEIGHT
+from config.settings import MBTI_WEIGHT, ATTACHMENT_PROMPT_WEIGHT
 
 
 # ── MBTI 보조 힌트 ─────────────────────────────────────────
@@ -33,6 +33,46 @@ def _get_mbti_hint(mbti: str) -> str:
         return ""
     hint_text = "\n".join(f"  - {h}" for h in active)
     return f"\n[MBTI 보조 힌트 — 반영 강도 {MBTI_WEIGHT:.1f}]\n{hint_text}"
+
+
+def _build_attachment_section(
+    couple_profile: CoupleProfile,
+    classification_desc: str,
+    self_label: str,
+) -> str:
+    """
+    ATTACHMENT_PROMPT_WEIGHT에 따라 애착 분류 섹션의 삽입 수준을 조절.
+    0.0: 완전 제거 / 0.5 이하: 요약본 / 1.0: 전체 삽입
+    """
+    if ATTACHMENT_PROMPT_WEIGHT <= 0.0:
+        return ""
+
+    warning = (
+        "[⚠ 아래 분류 정보 활용 규칙]\n"
+        "아래 애착 분류와 개입 지침은 상담사의 접근 방식을 결정하는 내부 참고 자료이다.\n"
+        "이 정보를 활용하여: 상대방의 말을 전달할 때 톤과 완화 수준을 조절하고, "
+        "질문 스타일과 접근 속도를 내담자 특성에 맞게 조정하라.\n"
+        "단, 애착 이론이나 패턴 분석을 내담자에게 직접 설명하지 마라.\n"
+        "내담자가 실제로 한 말과 상황을 항상 최우선으로 반영하라.\n"
+    )
+
+    if ATTACHMENT_PROMPT_WEIGHT < 1.0:
+        # 요약 모드: 분류명 + 핵심 한 줄만
+        return (
+            f"{warning}\n"
+            f"[커플 결합 분류: {couple_profile.classification}] (요약 참고용)\n"
+            f"이 커플의 결합 유형과 개입 방향을 참고하되, 실제 발화 내용에 기반하여 응답하라.\n"
+        )
+    else:
+        # 전체 삽입 모드 (기존 동작)
+        return (
+            f"{warning}\n"
+            f"[커플 결합 분류: {couple_profile.classification}]\n"
+            f"{couple_profile.classification_detail}\n\n"
+            f"[당신({self_label})의 32분류 렌즈]\n"
+            f"{classification_desc}\n\n"
+            f"{couple_profile.intervention_guide}"
+        )
 
 
 def build_system_prompt(
@@ -116,18 +156,18 @@ EFT는 행동 교정이나 논리적 잘잘못을 따지는 것이 아니라 '�
 ③ 단순·명확·간결한 언어: 복잡한 분석보다 짧고 따뜻한 문장이 더 깊이 닿는다. 한 문장에 하나의 생각만 담아라.
 ④ 내담자 자신의 어휘 활용: 내담자가 사용한 단어와 표현을 그대로 가져와서 사용한다. 이것이 가장 강력한 타당화이다.
 
+[애착유형·MBTI 활용 규칙 — 반드시 준수]
+- 애착유형과 MBTI는 내담자에게 접근하는 방식, 상대방의 말을 전달하는 톤, 질문 스타일을 결정하는 데만 사용하라.
+- 내담자에게 애착 이론, 패턴 분석, 사이클 개념을 직접 설명하거나 분석 결과를 말하지 마라.
+- 추구-철수, 밀고 당기기, 애착 불안/회피 등 이론적 프레이밍을 상담 응답에 직접 쓰지 마라.
+- 이 정보는 상담사인 너의 내부 참고용이다. 내담자는 이 분석을 들을 필요가 없다.
+
 [현재 내담자 정보]
 지금 말하고 있는 내담자: {self_label} (애착 유형: {self_prof.attach_type}, 불안점수 {self_prof.anxiety_score:.2f}, 회피점수 {self_prof.avoidance_score:.2f}, MBTI: {self_mbti})
 상대 파트너: {other_label} (애착 유형: {other_prof.attach_type}, 불안점수 {other_prof.anxiety_score:.2f}, 회피점수 {other_prof.avoidance_score:.2f}, MBTI: {other_mbti})
 {mbti_hint}
 
-[커플 결합 분류: {couple_profile.classification}]
-{couple_profile.classification_detail}
-
-[당신({self_label})의 32분류 렌즈]
-{classification_desc}
-
-{couple_profile.intervention_guide}
+{_build_attachment_section(couple_profile, classification_desc, self_label)}
 {ipv_warning}
 {emotion_section}
 {bullet_section}
@@ -157,13 +197,15 @@ EFT는 행동 교정이나 논리적 잘잘못을 따지는 것이 아니라 '�
 ③ 책임 수용과 치유: 온전한 책임 표현 + 진정성 있는 후회 + 새로운 유대 형성을 코칭하라.
 
 [상담사 행동 지침]
-- 내담자가 표면적 문제(연락 빈도, 데이트 비용 등)로 싸운다고 호소할 때, 표면적 논리에 갇히지 말고 그 이면의 '애착 손상'과 '연결 단절 두려움'을 포착하라.
-- 어떠한 애착 유형의 내담자라도 비판하거나 심판하지 말고, 파괴적 행동(집착·비난·도피·잠수)이 '나를 혼자 두지 마' 또는 '더 이상 상처받고 싶지 않아'라는 원초적 생존 본능이자 안전한 결속을 향한 절규임을 공감하고 긍정적으로 재구성(Reframing)하라.
-- 따뜻하고 수용적인 톤을 유지하며, 내담자 스스로 핵심 두려움을 직면하도록 부드럽지만 예리한 질문을 던져라.
+- 말투는 "~요" 체로 통일하라. (~습니다, ~입니다 혼용 금지. 예: "~인 것 같아요", "~었나요?", "~해보아요")
+- 내담자가 표면적 문제(연락 빈도, 데이트 비용 등)로 싸운다고 호소할 때, 표면적 논리에 갇히지 말고 그 이면의 마음을 탐색하라.
+- 어떠한 내담자라도 비판하거나 심판하지 말고, 파괴적 행동(집착·비난·도피·잠수) 이면의 마음을 공감하라.
+- 따뜻하고 수용적인 톤을 유지하며, 내담자 스스로 감정을 발견하도록 부드럽지만 예리한 질문을 던져라.
 - 한 번의 답변에 너무 많은 분석이나 단계를 쏟아내지 마라. 내담자가 감정을 소화할 수 있도록 한 번에 한두 가지의 따뜻한 질문만 던지며 티키타카를 유지하라.
 - 한국어로 대화하며, 전문 용어는 쉬운 말로 풀어서 설명하라.
 - 내담자를 부를 때는 반드시 '당신'이라는 호칭만 사용하라. 이름, 언니, 오빠, 형, 누나, 씨 등 다른 호칭은 절대 사용하지 마라.
 - 핵심 메시지를 반복하고, 내담자 자신의 어휘와 표현을 그대로 활용하여 공감과 타당화를 강화하라.
+- 내담자의 감정을 단정짓는 서술("~한 느낌이었던 거죠", "~때문에 힘드셨겠어요")을 사용하지 마라. 반드시 열린 질문("그때 어떤 마음이 들었나요?")이나 조심스러운 추론("혹시 ~한 느낌이 있었나요?")으로 확인하라.
 
 [출력 형식 금지 규칙 — 반드시 준수]
 ① 상대방 입장 전달 시 "이해할 수 있도록 도와드릴게요", "말씀드릴게요" 같은 도입 안내 문장 없이 상대방의 입장을 곧바로 시작하라.
@@ -182,6 +224,7 @@ def build_user_message(
     round_num: int,
     is_stage_first: bool,
     partner_last_reply: str,
+    self_reply: str,
     stage_instruction: str,
 ) -> str:
     """
@@ -199,27 +242,39 @@ def build_user_message(
         "④ 상대방 발화를 따옴표로 직접 인용하지 마라. 상담사의 언어로 재구성하여 전달하라."
     )
 
-    if round_num == 1:
+    content_rule = (
+        "\n[전달 및 질문 규칙 — 반드시 준수]\n"
+        f"① 상대방({other_label})이 실제로 한 말의 핵심을 한 문단(2~3문장)으로 전달하라. "
+        "상대방이 말한 구체적 상황과 이유를 반드시 포함하되, "
+        "공격적이거나 날카로운 표현은 상대방의 마음이나 걱정으로 부드럽게 재구성하라. "
+        "단, 상대방이 하지 않은 말이나 행동을 추측하여 덧붙이지 마라.\n"
+        "② 그 후 내담자의 감정을 탐색하는 열린 질문을 1~2개 하라.\n"
+        "③ 내담자의 감정을 단정짓지 마라. 반드시 질문으로 확인하라.\n"
+        "④ 패턴 분석, 사이클 설명, 애착 이론을 상담 응답에 직접 언급하지 마라.\n"
+        "⑤ 상대방이 침묵했다, 물러났다, 닫혔다 등 실제 발화에 없는 행동을 만들어내지 마라."
+    )
+
+    partner_content = partner_last_reply or "(답변 없음)"
+    self_content    = self_reply or "(답변 없음)"
+
+    context_block = (
+        f"[이번 라운드 {self_label}(당신)의 발화]\n{self_content}\n\n"
+        f"[이번 라운드 {other_label}의 발화]\n{partner_content}"
+    )
+
+    if is_stage_first and round_num > 1:
         return (
+            f"{context_block}\n\n"
             f"{stage_instruction}\n"
-            f"{other_label} 파트너의 입장을 {self_label}에게 전달한 뒤, "
-            f"{self_label}의 감정과 애착 욕구를 탐색하는 질문을 1~2개 하라."
-            f"{prohibit_note}"
-        )
-    elif is_stage_first:
-        return (
-            f"{stage_instruction}\n"
-            f"새로운 단계가 시작되었습니다. 상대방 답변 요약 없이 "
-            f"{self_label}에게 이 단계에 맞는 질문을 1~2개 하라."
+            f"새로운 단계가 시작되었어요. "
+            f"{content_rule}"
             f"{prohibit_note}"
         )
     else:
-        partner_content = partner_last_reply or "(답변 없음)"
         return (
-            f"[이번 라운드 {other_label}의 답변]\n{partner_content}\n\n"
+            f"{context_block}\n\n"
             f"{stage_instruction}\n"
-            f"{other_label}의 답변을 {self_label}에게 전달한 뒤, "
-            f"{self_label}의 1차적 정서와 애착 욕구를 탐색하는 질문을 1~2개 하라."
+            f"{content_rule}"
             f"{prohibit_note}"
         )
 

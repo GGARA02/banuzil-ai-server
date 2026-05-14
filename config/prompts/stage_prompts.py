@@ -45,6 +45,7 @@ def build_stage_instruction(
     eft_stage: int,
     signals: SignalState,
     eft_step: int = 0,   # 현재 9스텝 위치 (0이면 단계 내 자동 결정)
+    round_num: int = 1,  # 현재 라운드 번호 (1~2: 공감 집중, 3+: 신호 유도)
 ) -> str:
     """
     현재 내담자의 단계 지침 + 이번 라운드 유도 목표 문자열 생성.
@@ -55,67 +56,83 @@ def build_stage_instruction(
     other_sig = signals.m if is_female else signals.f
 
     if eft_stage == 1:
-        # Step 1~4 자동 결정
+        # Step 1~3 자동 결정 (Step 4 = 사이클 정의로 대체)
+        # 라운드 상한: 신호가 빨리 감지돼도 각 스텝을 반드시 거치도록 제한
         keys = STAGE1_SIGNALS
         self_count  = sum(1 for k in keys if sig[k])
         other_count = sum(1 for k in keys if other_sig[k])
 
+        # 신호 기반 스텝
         if self_count == 0 and other_count == 0:
-            current_step = 1
-            step_desc = (
-                "Step 1 [동맹 형성 + 초기 평가]: 지금은 신뢰를 쌓는 단계입니다. "
+            signal_step = 1
+        elif self_count < 2:
+            signal_step = 2
+        elif self_count < 3:
+            signal_step = 3
+        else:
+            signal_step = 3  # Step 4 제거, 최대 Step 3
+
+        # 라운드 기반 상한 (각 스텝 최소 경험 보장)
+        if round_num <= 2:
+            round_cap = 1
+        elif round_num <= 3:
+            round_cap = 2
+        else:
+            round_cap = 3
+
+        current_step = min(signal_step, round_cap)
+
+        step_descs = {
+            1: (
+                "Step 1 [동맹 형성 + 초기 평가]: 지금은 신뢰를 쌓는 단계예요. "
                 "판단하지 말고 두 사람 모두 안전하다고 느끼게 하십시오. "
                 "갈등 상황을 파악하되 누가 옳고 그른지 판단하지 마십시오."
-            )
-        elif self_count < 2:
-            current_step = 2
-            step_desc = (
-                "Step 2 [부정적 사이클 식별]: 두 사람이 함께 만들어낸 반복 패턴을 시각화하십시오. "
-                "'파트너가 문제'가 아니라 '이 사이클이 공동의 적'임을 인식시키십시오. "
+            ),
+            2: (
+                "Step 2 [부정적 사이클 식별]: 두 사람이 함께 만들어낸 반복 패턴을 인식시키십시오. "
+                "'파트너가 문제'가 아니라 '이 반복이 공동의 적'임을 깨닫게 하십시오. "
                 "비난·분노 같은 2차 정서 아래에 있는 1차 정서(두려움·외로움)를 탐색하십시오."
-            )
-        elif self_count < 3:
-            current_step = 3
-            step_desc = (
+            ),
+            3: (
                 "Step 3 [1차 정서 접근]: 표면적 감정(분노·비난·냉담) 아래에 숨겨진 "
                 "진짜 감정(버림받을 두려움·무가치함·외로움·수치심)을 조심스럽게 탐색하십시오. "
-                "내담자가 '왜 이렇게 반응했는지'를 스스로 발견하도록 Heightening 기법을 사용하십시오."
-            )
-        else:
-            current_step = 4
-            step_desc = (
-                "Step 4 [문제 재구성]: 갈등을 사이클 + 애착 욕구/두려움의 프레임으로 재정의하십시오. "
-                "'이것은 두 사람의 연결을 막는 패턴'이라는 공동 인식을 형성하십시오. "
-                "사이클 정의 준비가 되었는지 확인하십시오."
-            )
+                "내담자가 '왜 이렇게 반응했는지'를 스스로 발견하도록 도우십시오."
+            ),
+        }
+        step_desc = step_descs[current_step]
 
         missing       = [k for k in keys if not sig[k]]
         missing_other = [k for k in keys if not other_sig[k]]
         self_has_one  = any(sig[k] for k in keys)
         other_has_one = any(other_sig[k] for k in keys)
-        base = f"EFT 1단계 De-escalation (현재 {current_step}단계): {step_desc}"
+        base = f"EFT 1단계 De-escalation (현재 Step {current_step}): {step_desc}"
 
-        if not self_has_one:
+        # 라운드 1~2: 공감과 경청에 집중, 신호 압박 없음
+        if round_num <= 2:
             goal = (
-                "이번 라운드 유도 목표 (당신의 신호가 아직 하나도 확인되지 않았습니다):\n"
-                + "\n".join(f"  ❌ {SIGNAL_LABELS[k]}" for k in missing)
-                + "\n→ 위 신호 중 가장 자연스럽게 이끌어낼 수 있는 것을 이번 질문의 방향으로 삼으십시오."
+                "이번 라운드는 내담자의 이야기를 충분히 듣고, "
+                "내담자가 사용한 구체적 표현과 상황을 반영하며 공감하는 데 집중하라. "
+                "신호를 억지로 끌어내려 하지 마라."
+            )
+        elif not self_has_one:
+            goal = (
+                "이번 라운드 유도 방향 (자연스러운 대화 흐름 안에서 아래 신호가 드러날 수 있도록 질문 방향을 잡되, 억지로 끌어내지 마라):\n"
+                + "\n".join(f"  · {SIGNAL_LABELS[k]}" for k in missing)
             )
         elif not other_has_one:
             goal = (
-                "당신의 신호는 확인되었습니다. 이번 라운드에서는 상대방(파트너)의 1단계 신호를 이끌어내는 데 집중하십시오.\n"
+                "당신의 신호는 확인되었어요. 자연스러운 대화 안에서 상대방의 신호도 드러날 수 있도록 질문 방향을 잡되, 억지로 끌어내지 마라.\n"
                 "  (참고) 상대방 미확인 신호:\n"
-                + "\n".join(f"  ❌ {SIGNAL_LABELS[k]}" for k in missing_other)
-                + "\n→ 상대방의 발화에서 위 신호가 나올 수 있도록 간접적으로 유도하는 질문을 하십시오."
+                + "\n".join(f"  · {SIGNAL_LABELS[k]}" for k in missing_other)
             )
         elif missing:
             goal = (
-                "전진 조건(양측 각 1개) 달성 ✅ — 추가로 당신의 미확인 신호도 이끌어낼 수 있다면 더 깊은 탐색이 됩니다:\n"
-                + "\n".join(f"  ❌ {SIGNAL_LABELS[k]}" for k in missing)
-                + "\n→ 사이클 정의 준비가 되고 있습니다."
+                "양측 신호 달성 ✅ — 자연스러운 흐름 안에서 아래 신호도 탐색해보라:\n"
+                + "\n".join(f"  · {SIGNAL_LABELS[k]}" for k in missing)
+                + "\n→ 사이클 정의로 넘어갈 준비가 되고 있어요."
             )
         else:
-            goal = "1단계 신호 모두 확인됨. 사이클 정의 절차를 시작할 준비를 하십시오."
+            goal = "1단계 신호 모두 확인됨. 사이클 정의로 넘어갈 준비가 되었어요."
 
     elif eft_stage == 2:
         keys = STAGE2_SIGNALS
