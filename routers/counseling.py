@@ -83,6 +83,7 @@ async def round_analyze(req: RoundAnalyzeRequest):
         stage_progress   = req.stage_progress,
         signals          = signals,
         cycle_definition = req.cycle_definition,
+        cycle_skip_until = req.cycle_skip_until,
         round_num        = req.round_num,
         model_name       = req.model_name,
         bullet_enabled   = req.bullet_enabled,
@@ -133,6 +134,7 @@ async def round_analyze(req: RoundAnalyzeRequest):
         updated_f_history        = updated_f_history,
         updated_m_history        = updated_m_history,
         needs_cycle_definition   = result.get("needs_cycle_definition", False),
+        cycle_skip_until         = result.get("cycle_skip_until", req.cycle_skip_until),
         bullet_detected          = result.get("bullet_detected", False),
         bullet_type              = result.get("bullet_type", "None"),
         eval_score               = eval_scores.get("weighted_avg"),
@@ -153,8 +155,8 @@ async def round_analyze(req: RoundAnalyzeRequest):
 async def cycle_analyze(req: CycleRequest):
     """
     사이클 탐색 또는 정의.
-    cycle_definition이 비어있으면 → 탐색 질문 생성
-    cycle_definition이 있으면   → 사이클 정의 생성
+    답변 없이 호출 → 탐색 질문 생성
+    답변 포함 호출 → 사이클 정의 생성
     동의 처리는 Spring이 DB에서 직접 관리.
     """
     f_hist_text = "\n".join(
@@ -166,7 +168,8 @@ async def cycle_analyze(req: CycleRequest):
         for h in req.m_history
     )
 
-    if not req.cycle_definition:
+    if not req.f_explore_answer and not req.m_explore_answer:
+        # 답변 없음 → 탐색 질문 생성
         f_q, m_q = await asyncio.gather(
             call_llm("", build_cycle_explore_prompt(True,  f_hist_text),
                       model=EVAL_MODEL_NAME, max_tokens=400),
@@ -180,8 +183,13 @@ async def cycle_analyze(req: CycleRequest):
             cycle_round = 1,
         )
     else:
+        # 답변 있음 → 사이클 정의 생성
         definition = await call_llm(
-            "", build_cycle_definition_prompt(f_hist_text, m_hist_text),
+            "", build_cycle_definition_prompt(
+                f_hist_text, m_hist_text,
+                f_explore_answer=req.f_explore_answer,
+                m_explore_answer=req.m_explore_answer,
+            ),
             model=EVAL_MODEL_NAME, max_tokens=600,
         )
         return CycleDefinitionResponse(

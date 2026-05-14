@@ -88,8 +88,10 @@ class EFTState(TypedDict):
     cycle_definition:    str
     cycle_agreed:        dict[str, bool]  # {"f": bool, "m": bool}
     end_agreed:          dict[str, bool]  # {"f": bool, "m": bool}
+    cycle_skip_until:    int            # 사이클 거부 시 재시도 라운드
     cycle_round:         int           # 사이클 탐색 라운드 (1 또는 2)
     needs_cycle_definition: bool
+    is_cycle_round:      bool          # 사이클 진입 라운드 (질문 생략용)
 
     # KoELECTRA 감성 분석 결과
     f_emotion_data:      Optional[dict]
@@ -272,11 +274,23 @@ def node_eft_stage_router(state: EFTState) -> EFTState:
     # stage_rounds 업데이트 (라운드 시작 시 현재 단계 카운트 증가)
     stage_rounds = dict(state.get("stage_rounds", {1: 0, 2: 0, 3: 0}))
     stage        = state["eft_stage"]
+    round_num    = state.get("round_num", 1)
     stage_rounds[stage] = stage_rounds.get(stage, 0) + 1
+
+    # 사이클 진입 조건 선행 체크 (응답 생성 전에 판단)
+    is_cycle_round = False
+    if stage == 1 and not state.get("cycle_definition"):
+        cycle_skip_until = state.get("cycle_skip_until", 0)
+        if round_num >= cycle_skip_until:
+            signals = state.get("signals") or SignalState()
+            keys1 = STAGE1_SIGNALS
+            if any(signals.f[k] for k in keys1) and any(signals.m[k] for k in keys1):
+                is_cycle_round = True
 
     return {
         **state,
-        "stage_rounds": stage_rounds,
+        "stage_rounds":   stage_rounds,
+        "is_cycle_round": is_cycle_round,
     }
 
 
@@ -352,6 +366,9 @@ async def node_response_generator(state: EFTState) -> EFTState:
         f_stage_instruction += f"\n\n{extra}"
         m_stage_instruction += f"\n\n{extra}"
 
+    # 사이클 진입 라운드 여부 (eft_stage_router에서 선행 판단)
+    is_cycle_round = state.get("is_cycle_round", False)
+
     # 유저 메시지
     f_user_msg = build_user_message(
         is_female           = True,
@@ -360,6 +377,7 @@ async def node_response_generator(state: EFTState) -> EFTState:
         partner_last_reply  = partner_reply_for_f,
         self_reply          = state.get("f_reply", ""),
         stage_instruction   = f_stage_instruction,
+        is_cycle_round      = is_cycle_round,
     )
     m_user_msg = build_user_message(
         is_female           = False,
@@ -368,6 +386,7 @@ async def node_response_generator(state: EFTState) -> EFTState:
         partner_last_reply  = partner_reply_for_m,
         self_reply          = state.get("m_reply", ""),
         stage_instruction   = m_stage_instruction,
+        is_cycle_round      = is_cycle_round,
     )
 
     # 병렬 GPT 호출 (편향 방지 핵심)
@@ -571,12 +590,8 @@ async def node_stage_transition_check(state: EFTState) -> EFTState:
     if new_stage > stage and stage_rounds.get(stage, 0) < MIN_STAGE_ROUNDS:
         new_stage = stage
 
-    # 1단계 사이클 동의 필요 여부
-    needs_cycle = False
-    if new_stage == 1 and not state.get("cycle_definition"):
-        keys1 = STAGE1_SIGNALS
-        if (any(signals.f[k] for k in keys1) and any(signals.m[k] for k in keys1)):
-            needs_cycle = True
+    # 1단계 사이클 동의 필요 여부 (eft_stage_router에서 선행 판단한 결과 활용)
+    needs_cycle = state.get("is_cycle_round", False)
 
     stage_changed = new_stage != stage
     prev_stage    = stage
@@ -657,6 +672,7 @@ def create_initial_state(
     signals:        SignalState = None,
     cycle_definition: str = "",
     cycle_agreed:   dict = None,
+    cycle_skip_until: int = 0,
     end_agreed:     dict = None,
     round_num:      int = 1,
     # 설정 오버라이드 (모두 변수화)
@@ -692,7 +708,9 @@ def create_initial_state(
         cycle_agreed        = cycle_agreed or {"f": False, "m": False},
         end_agreed          = end_agreed or {"f": False, "m": False},
         cycle_round         = 0,
+        cycle_skip_until       = cycle_skip_until,
         needs_cycle_definition = False,
+        is_cycle_round         = False,
         f_emotion_data      = None,
         m_emotion_data      = None,
         bullet_detected     = False,

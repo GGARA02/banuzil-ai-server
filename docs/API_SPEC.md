@@ -103,9 +103,11 @@ v2에서 AI 서버가 메모리에 세션 상태를 관리했으나, v3에서는
 | `stage_progress` | integer | ❌ | 0~100 | 현재 단계 진행도 |
 | `signals` | object | ❌ | — | EFT 신호 상태 `{"f":{...}, "m":{...}}` |
 | `cycle_definition` | string | ❌ | — | 사이클 정의 텍스트 |
+| `cycle_skip_until` | integer | ❌ | 0 | 사이클 거부 시 재시도 기준 라운드 (0이면 즉시 가능) |
 | `model_name` | string | ❌ | — | LLM 오버라이드 |
 | `bullet_enabled` | boolean | ❌ | — | 총알잡기 ON/OFF 오버라이드 |
 | `emotion_weight` | float | ❌ | 0.0~1.0 | 감성 반영 강도 오버라이드 |
+| `max_refine` | integer | ❌ | 3 | Self-Refine 최대 횟수 (0이면 평가 스킵) |
 
 > **히스토리 형식**: `[{"role": "user", "content": "발화"}, {"role": "assistant", "content": "AI응답"}, ...]`
 > 첫 라운드에서는 빈 배열 `[]`을 보내면 된다.
@@ -167,7 +169,8 @@ v2에서 AI 서버가 메모리에 세션 상태를 관리했으나, v3에서는
 | `updated_signals` | object | **DB에 저장할 신호 상태** |
 | `updated_f_history` | array | **DB에 저장할 여성 히스토리** (현재 라운드 포함) |
 | `updated_m_history` | array | **DB에 저장할 남성 히스토리** (현재 라운드 포함) |
-| `needs_cycle_definition` | boolean | `true`면 `/ai/cycle` 호출 필요 |
+| `needs_cycle_definition` | boolean | `true`면 `/ai/cycle` 호출 필요. 이 라운드 응답은 질문 없이 감정 전달만으로 마무리됨 |
+| `cycle_skip_until` | integer | 사이클 거부 시 Spring이 저장할 재시도 라운드. 다음 요청에 재전달 |
 | `risk_flag` | boolean | `true`면 위험 신호 감지 — 상담은 계속 진행, Spring이 별도 처리 |
 | `risk_category` | string | 위험 유형 ("자해", "자살", "폭행" 등) |
 | `bullet_detected` | boolean | 총알잡기 감지 여부 |
@@ -263,20 +266,30 @@ v2에서 AI 서버가 메모리에 세션 상태를 관리했으나, v3에서는
 | `session_id` | string | ✅ | 세션 ID |
 | `f_history` | array | ✅ | 여성 대화 히스토리 |
 | `m_history` | array | ✅ | 남성 대화 히스토리 |
-| `cycle_definition` | string | ❌ | 비어있으면 탐색 단계, 있으면 정의 단계 |
+| `f_explore_answer` | string | ❌ | 여성 탐색 질문 답변 (있으면 정의 생성) |
+| `m_explore_answer` | string | ❌ | 남성 탐색 질문 답변 (있으면 정의 생성) |
 
 ### 호출 시나리오
 
-Spring이 관리하는 흐름:
-1. `cycle_definition: ""` 로 호출 → **탐색 질문** 수신
-2. 양측에게 질문 표시 → 답변 수집 → 라운드 진행
-3. `cycle_definition: ""` 로 재호출 → **사이클 정의** 수신
-4. 양측에게 정의 표시 → **동의 여부는 Spring이 DB에서 직접 관리**
-5. 양측 동의 시 Spring이 `eft_stage=2`로 업데이트 → 다음 라운드부터 2단계
+```
+[needs_cycle_definition: true 수신]
+  → 이 라운드 AI 응답은 질문 없이 감정 전달만으로 마무리됨
+  ↓
+1. 답변 없이 호출 → 탐색 질문 수신 (f_question, m_question)
+  ↓
+2. 양측에게 질문 표시 → 답변 수집
+  ↓
+3. 답변 포함 호출 → 사이클 정의 수신 (cycle_definition)
+  ↓
+4. 양측에게 정의 표시 → 동의 여부는 Spring이 DB에서 직접 관리
+  ├─ 동의 → Spring이 cycle_definition 저장 + eft_stage=2
+  └─ 거부 → Spring이 cycle_skip_until = round_num + 2 저장
+            → 2라운드 더 진행 후 자동 재시도
+```
 
 ### 응답 케이스 2가지
 
-**케이스 A: 탐색 질문** (`cycle_definition`이 비어있을 때)
+**케이스 A: 탐색 질문** (답변 없이 호출)
 
 ```json
 {
@@ -287,7 +300,7 @@ Spring이 관리하는 흐름:
 }
 ```
 
-**케이스 B: 사이클 정의** (`cycle_definition`이 있을 때)
+**케이스 B: 사이클 정의** (답변 포함 호출)
 
 ```json
 {
@@ -422,6 +435,7 @@ HierarchicalEmotionModel(concat_unweight) 단일 모델로 대분류/소분류�
 | `user1_message` | JSONB | `updated_f_history` | 여성 대화 히스토리 |
 | `user2_message` | JSONB | `updated_m_history` | 남성 대화 히스토리 |
 | `cycle_definition` | TEXT | cycle 응답에서 | 사이클 정의 텍스트 |
+| `cycle_skip_until` | INTEGER | `cycle_skip_until` | 사이클 거부 시 재시도 라운드 (0이면 즉시) |
 | `cycle_agreed_f` | BOOLEAN | Spring 직접 관리 | 여성 사이클 동의 |
 | `cycle_agreed_m` | BOOLEAN | Spring 직접 관리 | 남성 사이클 동의 |
 | `end_agreed_f` | BOOLEAN | Spring 직접 관리 | 여성 종료 동의 |

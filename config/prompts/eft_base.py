@@ -226,10 +226,11 @@ def build_user_message(
     partner_last_reply: str,
     self_reply: str,
     stage_instruction: str,
+    is_cycle_round: bool = False,
 ) -> str:
     """
     각 라운드에서 GPT에게 보내는 user 메시지 조립.
-    (시스템 프롬프트와 분리하여 유지)
+    is_cycle_round=True일 때: 질문 없이 감정 전달만으로 마무리.
     """
     self_label   = "여성" if is_female else "남성"
     other_label  = "남성" if is_female else "여성"
@@ -242,17 +243,29 @@ def build_user_message(
         "④ 상대방 발화를 따옴표로 직접 인용하지 마라. 상담사의 언어로 재구성하여 전달하라."
     )
 
-    content_rule = (
-        "\n[전달 및 질문 규칙 — 반드시 준수]\n"
-        f"① 상대방({other_label})이 실제로 한 말의 핵심을 한 문단(2~3문장)으로 전달하라. "
-        "상대방이 말한 구체적 상황과 이유를 반드시 포함하되, "
-        "공격적이거나 날카로운 표현은 상대방의 마음이나 걱정으로 부드럽게 재구성하라. "
-        "단, 상대방이 하지 않은 말이나 행동을 추측하여 덧붙이지 마라.\n"
-        "② 그 후 내담자의 감정을 탐색하는 열린 질문을 1~2개 하라.\n"
-        "③ 내담자의 감정을 단정짓지 마라. 반드시 질문으로 확인하라.\n"
-        "④ 패턴 분석, 사이클 설명, 애착 이론을 상담 응답에 직접 언급하지 마라.\n"
-        "⑤ 상대방이 침묵했다, 물러났다, 닫혔다 등 실제 발화에 없는 행동을 만들어내지 마라."
-    )
+    if is_cycle_round:
+        content_rule = (
+            "\n[전달 규칙 — 사이클 진입 라운드]\n"
+            f"① 상대방({other_label})이 실제로 한 말의 핵심을 한 문단(2~3문장)으로 전달하라. "
+            "상대방이 말한 구체적 상황과 이유를 반드시 포함하되, "
+            "공격적이거나 날카로운 표현은 상대방의 마음이나 걱정으로 부드럽게 재구성하라.\n"
+            "② 내담자의 마음을 짧게 공감하며 따뜻하게 마무리하라.\n"
+            "③ 질문을 던지지 마라. 이번 라운드는 감정 전달과 공감만으로 끝내라.\n"
+            "④ 패턴 분석, 사이클 설명, 애착 이론을 상담 응답에 직접 언급하지 마라.\n"
+            "⑤ 상대방이 침묵했다, 물러났다, 닫혔다 등 실제 발화에 없는 행동을 만들어내지 마라."
+        )
+    else:
+        content_rule = (
+            "\n[전달 및 질문 규칙 — 반드시 준수]\n"
+            f"① 상대방({other_label})이 실제로 한 말의 핵심을 한 문단(2~3문장)으로 전달하라. "
+            "상대방이 말한 구체적 상황과 이유를 반드시 포함하되, "
+            "공격적이거나 날카로운 표현은 상대방의 마음이나 걱정으로 부드럽게 재구성하라. "
+            "단, 상대방이 하지 않은 말이나 행동을 추측하여 덧붙이지 마라.\n"
+            "② 그 후 내담자의 감정을 탐색하는 열린 질문을 1~2개 하라.\n"
+            "③ 내담자의 감정을 단정짓지 마라. 반드시 질문으로 확인하라.\n"
+            "④ 패턴 분석, 사이클 설명, 애착 이론을 상담 응답에 직접 언급하지 마라.\n"
+            "⑤ 상대방이 침묵했다, 물러났다, 닫혔다 등 실제 발화에 없는 행동을 만들어내지 마라."
+        )
 
     partner_content = partner_last_reply or "(답변 없음)"
     self_content    = self_reply or "(답변 없음)"
@@ -293,9 +306,20 @@ def build_cycle_explore_prompt(is_female: bool, history_text: str) -> str:
     )
 
 
-def build_cycle_definition_prompt(f_history_text: str, m_history_text: str) -> str:
+def build_cycle_definition_prompt(
+    f_history_text: str, m_history_text: str,
+    f_explore_answer: str = "", m_explore_answer: str = "",
+) -> str:
+    answer_block = ""
+    if f_explore_answer or m_explore_answer:
+        answer_block = (
+            "\n\n[사이클 탐색 질문에 대한 답변]\n"
+            f"여성 답변: {f_explore_answer or '(미응답)'}\n"
+            f"남성 답변: {m_explore_answer or '(미응답)'}\n"
+        )
+
     return (
-        "아래는 두 내담자와 진행한 1단계 상담 기록이다. 마지막 교환에는 사이클 탐색 질문과 각자의 답변이 포함되어 있다.\n"
+        "아래는 두 내담자와 진행한 1단계 상담 기록이다.\n"
         "두 사람이 함께 만들어낸 부정적 상호작용 사이클(The Cycle)을 분석하여 간결하고 명확하게 정의하라.\n\n"
         "형식:\n"
         "- 3~5문장으로 작성하라.\n"
@@ -306,6 +330,7 @@ def build_cycle_definition_prompt(f_history_text: str, m_history_text: str) -> s
         "- 사이클 정의만 출력하라. 다른 설명이나 질문을 붙이지 마라.\n\n"
         f"[여성 상담 기록]\n{f_history_text}\n\n"
         f"[남성 상담 기록]\n{m_history_text}"
+        f"{answer_block}"
     )
 
 

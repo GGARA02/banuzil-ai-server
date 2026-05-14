@@ -42,6 +42,9 @@ class RoundAnalyzeRequest(BaseModel):
     signals:          Optional[dict] = None
     cycle_definition: str  = ""
 
+    # 사이클 거부 후 재시도 기준
+    cycle_skip_until: int = Field(default=0, ge=0, description="사이클 거부 시 재시도 라운드 (0이면 즉시 가능)")
+
     # 설정 오버라이드 (선택)
     model_name:     Optional[str]   = None
     bullet_enabled: Optional[bool]  = None
@@ -65,7 +68,9 @@ class RoundAnalyzeRequest(BaseModel):
 class CycleRequest(BaseModel):
     """
     POST /ai/cycle
-    사이클 탐색/정의. Spring이 히스토리와 현재 사이클 상태를 전달.
+    사이클 탐색/정의.
+    - 답변 없이 호출 → 탐색 질문 생성
+    - 답변 포함 호출 → 사이클 정의 생성
     """
     session_id: str
 
@@ -73,8 +78,9 @@ class CycleRequest(BaseModel):
     f_history: list[dict] = Field(default_factory=list)
     m_history: list[dict] = Field(default_factory=list)
 
-    # 현재 사이클 정의 (없으면 탐색 단계, 있으면 정의 단계)
-    cycle_definition: str = ""
+    # 탐색 질문에 대한 유저 답변 (있으면 정의 생성, 없으면 탐색 질문 생성)
+    f_explore_answer: str = ""
+    m_explore_answer: str = ""
 
 
 class ReportRequest(BaseModel):

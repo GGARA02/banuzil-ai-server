@@ -355,6 +355,7 @@ let STATE = {
   stageProgress: 0,
   signals: null,
   cycleDefinition: "",
+  cycleSkipUntil: 0,
   // UI
   busy: false,
 };
@@ -431,6 +432,7 @@ function initSession() {
   STATE.stageProgress = 0;
   STATE.signals      = null;
   STATE.cycleDefinition = "";
+  STATE.cycleSkipUntil = 0;
 
   document.getElementById('sessionBadge').textContent = sid;
   document.getElementById('sessionBadge').className = 'badge live';
@@ -457,6 +459,7 @@ function resetSession() {
   STATE.stageRounds = {"1":0,"2":0,"3":0};
   STATE.stageProgress = 0; STATE.signals = null;
   STATE.cycleDefinition = "";
+  STATE.cycleSkipUntil = 0;
   document.getElementById('sessionBadge').textContent = '세션 없음';
   document.getElementById('sessionBadge').className = 'badge';
   document.getElementById('sendBtn').disabled = true;
@@ -532,6 +535,7 @@ async function sendRound() {
       stage_progress:   STATE.stageProgress,
       signals:          STATE.signals,
       cycle_definition: STATE.cycleDefinition,
+      cycle_skip_until: STATE.cycleSkipUntil,
       bullet_enabled:   document.getElementById('bulletEnabled').checked,
       max_refine:       document.getElementById('selfRefineEnabled').checked ? undefined : 0,
     });
@@ -593,14 +597,18 @@ async function triggerCycle() {
 async function showCycleExplore() {
   try {
     const data = await api('POST', '/ai/cycle', {
-      session_id:       STATE.sessionId,
-      f_history:        STATE.fHistory,
-      m_history:        STATE.mHistory,
-      cycle_definition: "",
+      session_id: STATE.sessionId,
+      f_history:  STATE.fHistory,
+      m_history:  STATE.mHistory,
     });
+    STATE._cycleQuestions = { f: data.f_question, m: data.m_question };
     document.getElementById('cycleBox').classList.remove('hidden');
-    document.getElementById('cycleDef').textContent =
-      `[여성 탐색 질문]\n${data.f_question}\n\n[남성 탐색 질문]\n${data.m_question}`;
+    document.getElementById('cycleDef').innerHTML =
+      `<b>[여성 탐색 질문]</b>\n${esc(data.f_question)}\n\n<b>[남성 탐색 질문]</b>\n${esc(data.m_question)}\n\n` +
+      `<div style="margin-top:8px;"><label style="font-size:11px;color:var(--female);font-weight:500;">여성 답변</label>` +
+      `<textarea id="fExploreAnswer" style="width:100%;min-height:40px;font-size:12px;margin-bottom:6px;" placeholder="여성 답변 입력..."></textarea>` +
+      `<label style="font-size:11px;color:var(--male);font-weight:500;">남성 답변</label>` +
+      `<textarea id="mExploreAnswer" style="width:100%;min-height:40px;font-size:12px;" placeholder="남성 답변 입력..."></textarea></div>`;
     document.getElementById('cycleAgreeBtns').classList.add('hidden');
     document.getElementById('cycleExploreBtns').classList.remove('hidden');
     addMsg('f', 'system', '사이클 탐색', data.f_question);
@@ -609,12 +617,17 @@ async function showCycleExplore() {
 }
 
 async function generateCycleDef() {
+  const fAnswer = (document.getElementById('fExploreAnswer')?.value || '').trim();
+  const mAnswer = (document.getElementById('mExploreAnswer')?.value || '').trim();
+  if (!fAnswer && !mAnswer) return alert('탐색 질문에 대한 답변을 입력하세요.');
+
   try {
     const data = await api('POST', '/ai/cycle', {
       session_id:       STATE.sessionId,
       f_history:        STATE.fHistory,
       m_history:        STATE.mHistory,
-      cycle_definition: " ",  // 비어있지 않으면 정의 단계
+      f_explore_answer: fAnswer,
+      m_explore_answer: mAnswer,
     });
     STATE.cycleDefinition = data.cycle_definition || "";
     document.getElementById('cycleDef').textContent = STATE.cycleDefinition;
@@ -634,7 +647,11 @@ function agreeAllCycle() {
 }
 
 function hideCycleBox() {
+  // 사이클 거부 → 2라운드 후 재시도
+  STATE.cycleSkipUntil = STATE.roundNum + 2;
   document.getElementById('cycleBox').classList.add('hidden');
+  addSys(`사이클 거부 — ${STATE.cycleSkipUntil}라운드 이후 재시도`);
+  updateStateDebug();
 }
 
 // ================================================================

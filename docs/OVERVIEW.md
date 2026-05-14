@@ -171,14 +171,16 @@ AI 응답 생성 후 6개 척도로 채점하고, 기준 미달 시 응답을 �
 
 | 척도 | 가중치 | 설명 |
 |------|--------|------|
-| neutrality (구조적 중립성) | 20% | 양측에 공평한가 |
-| validation_depth (정서 타당화 깊이) | 20% | 1차 정서까지 도달했는가 |
-| attach_coherence (애착 패턴 정합성) | 20% | 32분류 전략이 반영됐는가 |
-| cycle_reframing (사이클 재구조화) | 15% | 갈등을 사이클 프레임으로 제시했는가 |
-| actionability (행동 가능성) | 15% | 구체적 다음 단계가 있는가 |
-| safety (안전성) | 10% | 위험 신호 처리가 적절한가 |
+| neutrality (구조적 중립성) | 30% | 양측에 공평한가 |
+| safety (안전성) | 20% | 위험 신호 처리가 적절한가 |
+| validation_depth (정서 타당화 깊이) | 15% | 1차 정서까지 도달했는가 |
+| attach_coherence (애착 패턴 정합성) | 13% | 32분류 전략이 반영됐는가 |
+| cycle_reframing (사이클 재구조화) | 12% | 갈등을 사이클 프레임으로 제시했는가 |
+| actionability (행동 가능성) | 10% | 구체적 다음 단계가 있는가 |
 
-가중 평균 < `EVAL_PASS_SCORE`(기본 4.0) 이거나 safety < `SAFETY_GATE_SCORE`(기본 3.0)이면 재생성. 최대 `MAX_REFINE`(기본 3)회.
+가중 평균 < `EVAL_PASS_SCORE`(기본 3.5) 이거나 safety < `SAFETY_GATE_SCORE`(기본 3.0)이면 재생성. 최대 `MAX_REFINE`(기본 3)회.
+
+`max_refine=0`으로 설정하면 Self-Refine 노드를 완전 스킵한다 (테스트 시 토큰 절약용).
 
 ### 4-6. 중립성 검사 (Neutrality Check)
 
@@ -213,7 +215,7 @@ response_generator 직후, self_refine 직전에 실행. AI 응답이 여성 또
 └───────┬─────────┘
         ▼
 ┌──────────────────┐
-│ eft_stage_router │ ── stage_rounds 카운트 증가
+│ eft_stage_router │ ── stage_rounds 카운트 + 사이클 진입 선행 판단
 └────────┬─────────┘
          ▼
 ┌────────────────────┐
@@ -360,7 +362,7 @@ LangGraph 기반 EFT 상담 핵심 로직. 노드 7개 + 엣지 로직.
 | `node_risk_gate` | 동기 | 위험 키워드 하드코딩 매칭. LLM 없음 |
 | `node_bullet_detector` | 비동기 | LLM으로 총알 유형 판정 |
 | `node_emotion_inject` | 비동기 | KoELECTRA 호출 (스레드풀에서 실행) |
-| `node_eft_stage_router` | 동기 | stage_rounds 카운트 증가 |
+| `node_eft_stage_router` | 동기 | stage_rounds 카운트 증가 + 사이클 진입 조건 선행 판단 (`is_cycle_round`) |
 | `node_response_generator` | 비동기 | f+m 응답 GPT 병렬 생성 |
 | `node_neutrality_check` | 비동기 | 중립성 검사 LLM 호출 |
 | `node_self_refine` | 비동기 | 6척도 채점 + 재생성 결정 |
@@ -434,6 +436,7 @@ KoELECTRA 파인튜닝 스크립트. **서버 실행과 무관** — 모델 학�
 | `AVOIDANCE_CUTOFF` | `2.33` | 회피 차원 컷오프 |
 | `TIER_RANGE_OFFSET` | `1.5` | MID tier 상한 오프셋 |
 | `MBTI_WEIGHT` | `0.2` | MBTI 프롬프트 반영 비중 |
+| `ATTACHMENT_PROMPT_WEIGHT` | `1.0` | 애착유형 상세 정보의 프롬프트 반영 강도 (0.0~1.0) |
 | `EMOTION_WEIGHT` | `0.3` | KoELECTRA 결과 반영 강도 |
 
 ### 총알잡기
@@ -446,14 +449,14 @@ KoELECTRA 파인튜닝 스크립트. **서버 실행과 무관** — 모델 학�
 | 변수 | 기본값 | 설명 |
 |------|--------|------|
 | `MAX_REFINE` | `3` | 최대 재생성 횟수 |
-| `EVAL_PASS_SCORE` | `4.0` | 가중평균 통과 기준 (1~5점) |
+| `EVAL_PASS_SCORE` | `3.5` | 가중평균 통과 기준 (1~5점) |
 | `SAFETY_GATE_SCORE` | `3.0` | safety 척도 최소값 |
-| `WEIGHT_NEUTRALITY` | `0.20` | 중립성 가중치 |
-| `WEIGHT_VALIDATION_DEPTH` | `0.20` | 타당화 깊이 가중치 |
-| `WEIGHT_ATTACH_COHERENCE` | `0.20` | 애착 정합성 가중치 |
-| `WEIGHT_CYCLE_REFRAMING` | `0.15` | 사이클 재구조화 가중치 |
-| `WEIGHT_ACTIONABILITY` | `0.15` | 행동 가능성 가중치 |
-| `WEIGHT_SAFETY` | `0.10` | 안전성 가중치 |
+| `WEIGHT_NEUTRALITY` | `0.30` | 중립성 가중치 |
+| `WEIGHT_SAFETY` | `0.20` | 안전성 가중치 |
+| `WEIGHT_VALIDATION_DEPTH` | `0.15` | 타당화 깊이 가중치 |
+| `WEIGHT_ATTACH_COHERENCE` | `0.13` | 애착 정합성 가중치 |
+| `WEIGHT_CYCLE_REFRAMING` | `0.12` | 사이클 재구조화 가중치 |
+| `WEIGHT_ACTIONABILITY` | `0.10` | 행동 가능성 가중치 |
 
 ### 중립성 검사
 | 변수 | 기본값 | 설명 |

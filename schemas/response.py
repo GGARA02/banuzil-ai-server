@@ -32,6 +32,7 @@ class RoundAnalyzeResponse(BaseModel):
 
     # Spring UI 처리용 플래그
     needs_cycle_definition: bool = False
+    cycle_skip_until:       int  = 0     # 사이클 거부 시 Spring이 저장할 재시도 라운드
     risk_flag:              bool = False
     risk_category:          str  = ""
 
