@@ -430,11 +430,13 @@ async def node_neutrality_check(state: EFTState) -> EFTState:
 
 
 def edge_neutrality_check(state: EFTState) -> str:
-    """중립 검사 실패 시 response_generator로 루프백"""
+    """중립 검사 실패 시 response_generator로 루프백. max_refine=0이면 self_refine 스킵."""
     nr = state.get("neutrality_result", {})
     refine_count = state.get("refine_count", 0)
     max_refine   = state.get("max_refine", MAX_REFINE)
 
+    if max_refine == 0:
+        return "stage_transition_check"
     if nr.get("regen_triggered") and refine_count < max_refine:
         return "response_generator"
     return "self_refine"
@@ -616,8 +618,9 @@ def build_eft_graph() -> StateGraph:
     graph.add_edge("eft_stage_router",   "response_generator")
     graph.add_edge("response_generator", "neutrality_check")           # ← 변경
     graph.add_conditional_edges("neutrality_check", edge_neutrality_check, {
-        "response_generator": "response_generator",                    # ← 재생성 루프
-        "self_refine":        "self_refine",
+        "response_generator":     "response_generator",                # ← 재생성 루프
+        "self_refine":            "self_refine",
+        "stage_transition_check": "stage_transition_check",            # ← max_refine=0 스킵
     })
     graph.add_conditional_edges("self_refine", edge_self_refine, {
         "response_generator":     "response_generator",

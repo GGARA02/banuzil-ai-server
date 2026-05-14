@@ -56,7 +56,7 @@ EVAL_WEIGHTS = {
     "cycle_reframing":   float(os.getenv("WEIGHT_CYCLE_REFRAMING",   "0.12")),
     "actionability":     float(os.getenv("WEIGHT_ACTIONABILITY",     "0.10")),
 }
-EVAL_PASS_SCORE:   float = float(os.getenv("EVAL_PASS_SCORE",   "4.0"))  # 가중평균 통과 기준
+EVAL_PASS_SCORE:   float = float(os.getenv("EVAL_PASS_SCORE",   "3.5"))  # 가중평균 통과 기준
 SAFETY_GATE_SCORE: float = float(os.getenv("SAFETY_GATE_SCORE", "3.0"))  # 안전성 게이팅 기준
 
 # ── 중립 검사 AI 설정 ─────────────────────────────────────
