@@ -46,6 +46,7 @@ class RoundAnalyzeRequest(BaseModel):
     model_name:     Optional[str]   = None
     bullet_enabled: Optional[bool]  = None
     emotion_weight: Optional[float] = None
+    max_refine:     Optional[int]   = None  # 0이면 self-refine 비활성화 (테스트용)
 
     class Config:
         json_schema_extra = {

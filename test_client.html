@@ -182,6 +182,15 @@
         </label>
         <div style="font-size:10px;color:var(--muted);margin-top:3px;line-height:1.5;">기본 OFF. DSPy 기반 공격/불신 발화 감지.</div>
       </div>
+      <!-- Self-Refine 토글 -->
+      <div style="margin-top:8px;">
+        <div style="font-size:11px;font-weight:600;margin-bottom:5px;">Self-Refine</div>
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;margin-top:3px;">
+          <input type="checkbox" id="selfRefineEnabled">
+          <span style="font-size:11px;">Self-Refine 활성화</span>
+        </label>
+        <div style="font-size:10px;color:var(--muted);margin-top:3px;line-height:1.5;">기본 OFF. 비활성화 시 토큰 절약 (테스트용).</div>
+      </div>
       <!-- 자동 테스트 -->
       <div>
         <div style="font-size:11px;font-weight:600;margin-bottom:5px;">자동 테스트 (GPT-4o-mini)</div>
@@ -511,6 +520,7 @@ async function sendRound() {
       signals:          STATE.signals,
       cycle_definition: STATE.cycleDefinition,
       bullet_enabled:   document.getElementById('bulletEnabled').checked,
+      max_refine:       document.getElementById('selfRefineEnabled').checked ? undefined : 0,
     });
 
     // updated_* 필드로 로컬 상태 갱신 (Spring이 DB에 저장할 것들)

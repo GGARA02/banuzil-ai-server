@@ -87,6 +87,7 @@ async def round_analyze(req: RoundAnalyzeRequest):
         model_name       = req.model_name,
         bullet_enabled   = req.bullet_enabled,
         emotion_weight   = req.emotion_weight,
+        max_refine       = req.max_refine,
     )
 
     try:
