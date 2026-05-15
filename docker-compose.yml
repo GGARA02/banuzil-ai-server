@@ -1,5 +1,5 @@
 # ============================================================
-# docker-compose.yml — Spring + AI 서버 통합 배포
+# docker-compose.yml — AI 서버 배포
 # ============================================================
 
 services:
@@ -29,25 +29,7 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 60s    # KoELECTRA 모델 로딩 시간 여유
-
-  # ── Spring 서버 ───────────────────────────────────────────
-  # Spring 프로젝트 경로에 맞게 context/dockerfile 경로를 수정하세요
-  spring-server:
-    build:
-      context: ../banuzil-spring-server    # Spring 프로젝트 루트 경로 수정
-      dockerfile: Dockerfile
-    container_name: banuzil-spring-server
-    ports:
-      - "8080:8080"
-    environment:
-      - AI_SERVER_URL=http://ai-server:8000   # 컨테이너 내부 통신
-    depends_on:
-      ai-server:
-        condition: service_healthy
-    restart: unless-stopped
-    networks:
-      - banuzil-net
+      start_period: 60s
 
 networks:
   banuzil-net:
