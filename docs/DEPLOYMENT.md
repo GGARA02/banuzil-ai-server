@@ -101,9 +101,9 @@ sudo systemctl restart nginx
 > Nginx는 EC2 재부팅 시 자동 시작됨. GitHub Actions와 무관.
 
 ### 4-4. Swap 메모리 설정 (필수)
-t3.small은 RAM 2GB로 모델 로딩 시 OOM 발생. Swap 2GB 추가 필수.
+t3.small은 RAM 2GB로 모델 로딩 시 OOM 발생. Swap 4GB 추가 필수.
 ```bash
-sudo fallocate -l 2G /swapfile
+sudo fallocate -l 4G /swapfile
 sudo chmod 600 /swapfile
 sudo mkswap /swapfile
 sudo swapon /swapfile
@@ -112,7 +112,17 @@ sudo swapon /swapfile
 echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
 ```
 
-확인: `free -h` 실행 시 Swap 2.0Gi 표시되면 정상.
+확인: `free -h` 실행 시 Swap 4.0Gi 표시되면 정상.
+
+> Swap 크기 변경 시 (예: 2G → 4G):
+> ```bash
+> sudo swapoff /swapfile
+> sudo fallocate -l 4G /swapfile
+> sudo chmod 600 /swapfile
+> sudo mkswap /swapfile
+> sudo swapon /swapfile
+> ```
+> `/etc/fstab`은 이미 등록돼 있으므로 재부팅 후에도 유지됨.
 
 ### 4-5. 코드 다운로드
 ```bash
