@@ -2,7 +2,13 @@
 .env
 
 # 학습 데이터 (서빙에 불필요, 수백 MB)
-data/
+data/raw/
+data/processed/
+
+# 학습 스크립트 (서빙에 불필요)
+data/finetune/*.py
+data/finetune/*.ipynb
+!data/finetune/config.py
 
 # 모델 가중치 (볼륨 마운트로 제공)
 models/

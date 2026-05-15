@@ -16,7 +16,7 @@ WORKDIR /app
 # ── 의존성 설치 ──────────────────────────────────────────────
 # torch를 CPU 전용으로 먼저 설치 (CUDA 제외 → 이미지 약 2GB 절감)
 RUN pip install --no-cache-dir \
-    torch==2.3.1 \
+    torch==2.4.0 \
     --index-url https://download.pytorch.org/whl/cpu
 
 COPY requirements.txt .
