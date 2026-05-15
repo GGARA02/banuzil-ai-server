@@ -1,0 +1,54 @@
+# ============================================================
+# docker-compose.yml — Spring + AI 서버 통합 배포
+# ============================================================
+
+services:
+
+  # ── AI 서버 (FastAPI) ──────────────────────────────────────
+  ai-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: banuzil-ai-server
+    ports:
+      - "8000:8000"
+    volumes:
+      # KoELECTRA 모델 가중치 마운트 (필수)
+      - ./models:/app/models:ro
+      # DSPy 최적화 파일 마운트 (선택)
+      - ./dspy_optimized:/app/dspy_optimized:ro
+    env_file:
+      - .env
+    environment:
+      - PYTHONUNBUFFERED=1
+    restart: unless-stopped
+    networks:
+      - banuzil-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/emotion/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s    # KoELECTRA 모델 로딩 시간 여유
+
+  # ── Spring 서버 ───────────────────────────────────────────
+  # Spring 프로젝트 경로에 맞게 context/dockerfile 경로를 수정하세요
+  spring-server:
+    build:
+      context: ../banuzil-spring-server    # Spring 프로젝트 루트 경로 수정
+      dockerfile: Dockerfile
+    container_name: banuzil-spring-server
+    ports:
+      - "8080:8080"
+    environment:
+      - AI_SERVER_URL=http://ai-server:8000   # 컨테이너 내부 통신
+    depends_on:
+      ai-server:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - banuzil-net
+
+networks:
+  banuzil-net:
+    driver: bridge

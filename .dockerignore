@@ -1,0 +1,35 @@
+# 환경 변수 (런타임에 주입)
+.env
+
+# 학습 데이터 (서빙에 불필요, 수백 MB)
+data/
+
+# 모델 가중치 (볼륨 마운트로 제공)
+models/
+
+# 개발/테스트 파일
+__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+
+# DSPy 최적화 파일 (선택적 마운트)
+# dspy_optimized/   ← 사용 중이면 이 줄을 주석 처리
+
+# 그래프 시각화 출력
+graphs/*.png
+graphs/*.pdf
+
+# Git
+.git/
+.gitignore
+
+# IDE
+.vscode/
+.idea/
+
+# 로그
+*.log
