@@ -150,7 +150,7 @@
     <div class="panel-body">
       <div>
         <label>Python 서버 URL</label>
-        <input type="text" id="serverUrl" value="http://localhost:8000">
+        <input type="text" id="serverUrl" value="">
       </div>
       <div>
         <div style="font-size:11px;font-weight:600;margin-bottom:5px;">세션 초기화</div>
@@ -335,6 +335,13 @@
 </div>
 
 <script>
+// ================================================================
+// 서버 URL 자동 감지 (로컬이면 localhost, 온라인이면 도메인)
+// ================================================================
+document.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('serverUrl').value = window.location.origin;
+});
+
 // ================================================================
 // 클라이언트 상태 (v3 Stateless — Spring DB 역할을 브라우저가 대신)
 // ================================================================

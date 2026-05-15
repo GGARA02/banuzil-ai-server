@@ -3,7 +3,7 @@
 # 실행: python -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 # ============================================================
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
@@ -43,12 +43,13 @@ async def supabase_health():
 
 
 @app.get("/")
-async def root():
+async def root(request: Request):
+    base = str(request.base_url).rstrip("/")
     return {
         "service": "바느질 AI 서버",
         "version": "3.0.0",
-        "docs":    "http://localhost:8000/docs",
-        "test":    "http://localhost:8000/test",
+        "docs":    f"{base}/docs",
+        "test":    f"{base}/test",
         "endpoints": {
             "라운드 분석":    "POST /ai/round-analyze",
             "사이클 절차":    "POST /ai/cycle",
