@@ -10,34 +10,59 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: SSH 키 설정
+      - name: 배포 시도 1
+        id: try1
+        continue-on-error: true
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ubuntu
+          key: ${{ secrets.EC2_KEY }}
+          timeout: 60s
+          command_timeout: 30m
+          script: |
+            cd ~/banuzil-ai-server
+            git pull
+            sudo docker compose up --build -d
+
+      - name: 재시도 대기 (1차 실패 시)
+        if: steps.try1.outcome == 'failure'
         run: |
-          mkdir -p ~/.ssh
-          echo "${{ secrets.EC2_KEY }}" > ~/.ssh/deploy_key
-          chmod 600 ~/.ssh/deploy_key
+          echo "1차 실패. 30초 후 재시도..."
+          sleep 30
 
-      - name: EC2 배포 (최대 3회 재시도)
+      - name: 배포 시도 2
+        id: try2
+        if: steps.try1.outcome == 'failure'
+        continue-on-error: true
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ubuntu
+          key: ${{ secrets.EC2_KEY }}
+          timeout: 60s
+          command_timeout: 30m
+          script: |
+            cd ~/banuzil-ai-server
+            git pull
+            sudo docker compose up --build -d
+
+      - name: 재시도 대기 (2차 실패 시)
+        if: steps.try1.outcome == 'failure' && steps.try2.outcome == 'failure'
         run: |
-          MAX_ATTEMPTS=3
-          WAIT_SECONDS=30
+          echo "2차 실패. 30초 후 재시도..."
+          sleep 30
 
-          for i in $(seq 1 $MAX_ATTEMPTS); do
-            echo "=== 배포 시도 $i/$MAX_ATTEMPTS ==="
-
-            if ssh -i ~/.ssh/deploy_key \
-                   -o StrictHostKeyChecking=no \
-                   -o ConnectTimeout=60 \
-                   ubuntu@${{ secrets.EC2_HOST }} \
-                   "cd ~/banuzil-ai-server && git pull && sudo docker compose up --build -d"; then
-              echo "배포 성공!"
-              exit 0
-            fi
-
-            if [ $i -lt $MAX_ATTEMPTS ]; then
-              echo "연결 실패. ${WAIT_SECONDS}초 후 재시도..."
-              sleep $WAIT_SECONDS
-            fi
-          done
-
-          echo "3회 시도 모두 실패"
-          exit 1
+      - name: 배포 시도 3
+        if: steps.try1.outcome == 'failure' && steps.try2.outcome == 'failure'
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ubuntu
+          key: ${{ secrets.EC2_KEY }}
+          timeout: 60s
+          command_timeout: 30m
+          script: |
+            cd ~/banuzil-ai-server
+            git pull
+            sudo docker compose up --build -d
