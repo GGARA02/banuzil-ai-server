@@ -96,8 +96,28 @@ sudo docker compose up --build -d
 
 ## 5. 코드 업데이트 (재배포)
 
-코드를 수정하고 GitHub에 push한 후:
+### 자동 배포 (GitHub Actions) ✅
+`master` 브랜치에 push하면 자동으로 EC2에 배포돼요.
 
+```
+git push origin master
+    ↓
+GitHub Actions 자동 실행
+    ↓
+EC2에서 git pull + docker compose up --build -d
+```
+
+배포 진행 상황은 GitHub 저장소 → **Actions 탭**에서 확인 가능.
+- ✅ 초록 체크 = 배포 성공
+- ❌ 빨간 X = 배포 실패 (로그 클릭해서 원인 확인)
+
+### GitHub Secrets (Actions 설정값)
+| Secret | 값 | 용도 |
+|--------|-----|------|
+| `EC2_HOST` | `15.135.116.29` | EC2 접속 IP |
+| `EC2_KEY` | `banuzil-key.pem` 내용 | EC2 SSH 키 |
+
+### 수동 배포 (필요시)
 ```bash
 # EC2에서 실행
 cd ~/banuzil-ai-server
@@ -106,7 +126,7 @@ sudo docker compose up --build -d
 ```
 
 > `.env`나 모델 파일이 변경된 경우에만 별도 scp 전송 필요.
-> 코드만 변경된 경우 `git pull + docker compose up --build -d`로 충분.
+> 코드만 변경된 경우 자동 배포로 충분.
 
 ---
 
@@ -157,7 +177,7 @@ sudo docker image prune -f
 
 ## 8. 향후 TODO
 
-- [ ] **GitHub Actions** — push 시 EC2 자동 배포 (git pull + docker restart)
+- [x] **GitHub Actions** — push 시 EC2 자동 배포 완료
 - [ ] **도메인 연결** — IP 대신 도메인 주소 사용
 - [ ] **HTTPS (SSL)** — Let's Encrypt 인증서 발급 + Nginx 리버스 프록시
 - [ ] **인스턴스 사양 업그레이드** — RAM 부족 시 t3.medium (4GB)으로 변경
