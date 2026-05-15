@@ -1,3 +1,6 @@
+# AWS 키 페어 (절대 커밋 금지)
+*.pem
+
 # Python
 __pycache__/
 *.pyc
