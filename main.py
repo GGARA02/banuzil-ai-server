@@ -35,6 +35,12 @@ async def test_client():
     path = os.path.join(os.path.dirname(__file__), "test_client.html")
     return FileResponse(path)
 
+# 감성 분석 테스트 페이지
+@app.get("/emotion-test")
+async def emotion_test():
+    path = os.path.join(os.path.dirname(__file__), "emotion_test.html")
+    return FileResponse(path)
+
 @app.get("/health/supabase")
 async def supabase_health():
     """Supabase 연결 상태 확인"""

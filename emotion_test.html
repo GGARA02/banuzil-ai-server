@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>감성 분석 테스트</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'Pretendard', -apple-system, sans-serif; background: #f5f5f5; padding: 20px; }
+  .container { max-width: 600px; margin: 0 auto; }
+  h1 { font-size: 20px; margin-bottom: 16px; color: #333; }
+  .card { background: #fff; border-radius: 12px; padding: 20px; margin-bottom: 16px; box-shadow: 0 1px 4px rgba(0,0,0,0.08); }
+  label { display: block; font-size: 12px; font-weight: 600; color: #666; margin-bottom: 4px; }
+  textarea { width: 100%; height: 80px; border: 1px solid #ddd; border-radius: 8px; padding: 10px; font-size: 14px; resize: vertical; font-family: inherit; }
+  textarea:focus { outline: none; border-color: #4a90d9; }
+  .row { display: flex; gap: 10px; margin-top: 10px; }
+  .row > div { flex: 1; }
+  select, input[type="text"] { width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 8px; font-size: 13px; }
+  button { width: 100%; padding: 12px; background: #4a90d9; color: #fff; border: none; border-radius: 8px; font-size: 15px; font-weight: 600; cursor: pointer; margin-top: 14px; }
+  button:hover { background: #3a7bc8; }
+  button:disabled { background: #ccc; cursor: not-allowed; }
+  .result { display: none; }
+  .result.show { display: block; }
+  .result-header { font-size: 13px; font-weight: 600; color: #666; margin-bottom: 8px; }
+  .bar-container { margin-bottom: 6px; }
+  .bar-label { display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 2px; }
+  .bar-label span:first-child { font-weight: 600; color: #333; }
+  .bar-label span:last-child { color: #888; }
+  .bar { height: 24px; background: #eee; border-radius: 6px; overflow: hidden; }
+  .bar-fill { height: 100%; border-radius: 6px; transition: width 0.5s ease; }
+  .category .bar-fill { background: linear-gradient(90deg, #4a90d9, #6ab0f3); }
+  .detail .bar-fill { background: linear-gradient(90deg, #e8913a, #f0b060); }
+  .input-echo { font-size: 12px; color: #999; margin-bottom: 12px; }
+  .loading { text-align: center; padding: 20px; color: #888; }
+  .error { background: #fff0f0; color: #d32f2f; padding: 12px; border-radius: 8px; font-size: 13px; }
+  .server-info { font-size: 11px; color: #aaa; text-align: center; margin-top: 12px; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>감성 분석 테스트</h1>
+
+  <div class="card">
+    <label>발화 입력</label>
+    <textarea id="text" placeholder="분석할 문장을 입력하세요. 예: 요즘 남자친구가 연락을 안 해서 너무 불안해요."></textarea>
+    <div class="row">
+      <div>
+        <label>성별</label>
+        <select id="gender">
+          <option value="여성">여성</option>
+          <option value="남성">남성</option>
+          <option value="미상" selected>미상</option>
+        </select>
+      </div>
+      <div>
+        <label>상황</label>
+        <input type="text" id="situation" value="연애">
+      </div>
+    </div>
+    <button id="analyzeBtn" onclick="analyze()">분석하기</button>
+  </div>
+
+  <div id="result" class="card result">
+    <div id="inputEcho" class="input-echo"></div>
+
+    <div class="result-header">대분류 (Category)</div>
+    <div id="categoryBars" class="category"></div>
+
+    <div class="result-header" style="margin-top:14px;">소분류 (Detail)</div>
+    <div id="detailBars" class="detail"></div>
+  </div>
+
+  <div id="error" class="card error" style="display:none;"></div>
+  <div class="server-info" id="serverInfo"></div>
+</div>
+
+<script>
+const serverUrl = window.location.origin;
+document.getElementById('serverInfo').textContent = serverUrl;
+
+// Enter키로 분석
+document.getElementById('text').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); analyze(); }
+});
+
+async function analyze() {
+  const text = document.getElementById('text').value.trim();
+  if (!text) return;
+
+  const gender = document.getElementById('gender').value;
+  const situation = document.getElementById('situation').value;
+  const btn = document.getElementById('analyzeBtn');
+  const resultDiv = document.getElementById('result');
+  const errorDiv = document.getElementById('error');
+
+  btn.disabled = true;
+  btn.textContent = '분석 중...';
+  resultDiv.classList.remove('show');
+  errorDiv.style.display = 'none';
+
+  try {
+    const res = await fetch(`${serverUrl}/emotion/analyze`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, gender, situation })
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || `HTTP ${res.status}`);
+    }
+
+    const data = await res.json();
+    renderResult(data);
+  } catch (e) {
+    errorDiv.textContent = `오류: ${e.message}`;
+    errorDiv.style.display = 'block';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '분석하기';
+  }
+}
+
+function renderResult(data) {
+  const resultDiv = document.getElementById('result');
+  document.getElementById('inputEcho').textContent =
+    `"${data.input.text}" (${data.input.gender}, ${data.input.situation})`;
+
+  renderBars('categoryBars', data.category);
+  renderBars('detailBars', data.detail);
+  resultDiv.classList.add('show');
+}
+
+function renderBars(containerId, items) {
+  const container = document.getElementById(containerId);
+  container.innerHTML = items.map(item => {
+    const pct = (item.score * 100).toFixed(1);
+    return `
+      <div class="bar-container">
+        <div class="bar-label">
+          <span>${item.label}</span>
+          <span>${pct}%</span>
+        </div>
+        <div class="bar">
+          <div class="bar-fill" style="width: ${pct}%"></div>
+        </div>
+      </div>`;
+  }).join('');
+}
+</script>
+</body>
+</html>
