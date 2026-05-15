@@ -25,8 +25,19 @@
 
 ## 2. SSH 접속
 
+### Windows (CMD/PowerShell)
+```
+ssh -i "<pem 파일 경로>\banuzil-key.pem" ubuntu@15.135.116.29
+```
+
+### Mac / Linux
 ```bash
 ssh -i "<pem 파일 경로>/banuzil-key.pem" ubuntu@15.135.116.29
+```
+
+예시 (Windows):
+```
+ssh -i "C:\Users\<사용자명>\Documents\banuzil-key.pem" ubuntu@15.135.116.29
 ```
 
 ### .pem 키 파일 주의사항
