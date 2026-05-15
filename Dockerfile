@@ -14,13 +14,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 # ── 의존성 설치 ──────────────────────────────────────────────
-# torch를 CPU 전용으로 먼저 설치 (CUDA 제외 → 이미지 약 2GB 절감)
+# torch CPU 전용 설치 (로컬과 동일 버전 고정)
 RUN pip install --no-cache-dir \
-    torch==2.4.0 \
+    torch==2.11.0 \
     --index-url https://download.pytorch.org/whl/cpu
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
+
+# transformers 버전 고정 (로컬과 동일)
+RUN pip install --no-cache-dir transformers==5.8.0
 
 # ── 소스 복사 ────────────────────────────────────────────────
 COPY . .
