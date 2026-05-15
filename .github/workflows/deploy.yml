@@ -5,6 +5,11 @@ on:
     branches:
       - master
 
+# 같은 브랜치에 새 푸시가 오면 이전 실행 자동 취소
+concurrency:
+  group: deploy-master
+  cancel-in-progress: true
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
