@@ -5,7 +5,7 @@
 | 항목 | 값 |
 |------|-----|
 | 클라우드 | AWS EC2 |
-| 인스턴스 유형 | t3.small (2 vCPU, 2GB RAM) |
+| 인스턴스 유형 | t3.small (2 vCPU, 2GB RAM + Swap 2GB) |
 | OS | Ubuntu 26.04 LTS |
 | 스토리지 | 20 GiB (gp3) |
 | 리전 | ap-southeast-2 (시드니) |
@@ -77,27 +77,41 @@ sudo systemctl start docker
 sudo usermod -aG docker ubuntu
 ```
 
-### 4-2. 코드 다운로드
+### 4-2. Swap 메모리 설정 (필수)
+t3.small은 RAM 2GB로 모델 로딩 시 OOM 발생. Swap 2GB 추가 필수.
+```bash
+sudo fallocate -l 2G /swapfile
+sudo chmod 600 /swapfile
+sudo mkswap /swapfile
+sudo swapon /swapfile
+
+# 재부팅 시에도 유지되도록 영구 설정
+echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+```
+
+확인: `free -h` 실행 시 Swap 2.0Gi 표시되면 정상.
+
+### 4-3. 코드 다운로드
 ```bash
 git clone https://github.com/GGARA02/banuzil-ai-server.git
 cd banuzil-ai-server
 ```
 
-### 4-3. 모델 파일 전송 (로컬 CMD에서)
+### 4-4. 모델 파일 전송 (로컬 CMD에서)
 ```bash
 scp -i "<pem 경로>/banuzil-key.pem" \
     "<로컬 경로>/models/concat_unweight/best_model.pt" \
     ubuntu@15.135.116.29:~/banuzil-ai-server/models/concat_unweight/
 ```
 
-### 4-4. .env 파일 전송 (로컬 CMD에서)
+### 4-5. .env 파일 전송 (로컬 CMD에서)
 ```bash
 scp -i "<pem 경로>/banuzil-key.pem" \
     "<로컬 경로>/.env" \
     ubuntu@15.135.116.29:~/banuzil-ai-server/.env
 ```
 
-### 4-5. Docker 빌드 및 실행
+### 4-6. Docker 빌드 및 실행
 ```bash
 cd ~/banuzil-ai-server
 sudo docker compose up --build -d
@@ -167,6 +181,12 @@ sudo docker compose up --build -d
 
 # 안 쓰는 Docker 이미지 정리 (디스크 절약)
 sudo docker image prune -f
+
+# RAM / Swap 사용량 확인
+free -h
+
+# OOM(메모리 부족) 발생 이력 확인
+sudo dmesg | grep -i "killed process" | tail -5
 ```
 
 ---
@@ -191,4 +211,5 @@ sudo docker image prune -f
 - [x] **GitHub Actions** — push 시 EC2 자동 배포 완료
 - [ ] **도메인 연결** — IP 대신 도메인 주소 사용
 - [ ] **HTTPS (SSL)** — Let's Encrypt 인증서 발급 + Nginx 리버스 프록시
-- [ ] **인스턴스 사양 업그레이드** — RAM 부족 시 t3.medium (4GB)으로 변경
+- [x] **Swap 메모리** — 2GB Swap 설정 완료 (OOM 방지)
+- [ ] **인스턴스 사양 업그레이드** — Swap으로도 부족 시 t3.medium (4GB)으로 변경
