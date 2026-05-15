@@ -10,8 +10,10 @@
 | 스토리지 | 20 GiB (gp3) |
 | 리전 | ap-southeast-2 (시드니) |
 | 탄력적 IP | `15.135.116.29` |
-| API 주소 | `http://15.135.116.29:8000` |
-| Swagger UI | `http://15.135.116.29:8000/docs` |
+| 도메인 | `banuzil-ai.duckdns.org` |
+| API 주소 | `http://banuzil-ai.duckdns.org` |
+| Swagger UI | `http://banuzil-ai.duckdns.org/docs` |
+| Nginx | 80 → 8000 리버스 프록시 |
 
 ### 보안 그룹 (launch-wizard-1)
 
@@ -77,7 +79,28 @@ sudo systemctl start docker
 sudo usermod -aG docker ubuntu
 ```
 
-### 4-2. Swap 메모리 설정 (필수)
+### 4-2. Nginx 설치 및 설정 (리버스 프록시)
+80번 포트 → 8000번으로 전달하여 포트 번호 없이 접속 가능하게 함.
+```bash
+sudo apt install -y nginx
+sudo bash -c 'cat > /etc/nginx/sites-available/default << EOF
+server {
+    listen 80;
+    server_name banuzil-ai.duckdns.org;
+
+    location / {
+        proxy_pass http://localhost:8000;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+    }
+}
+EOF'
+sudo systemctl restart nginx
+```
+
+> Nginx는 EC2 재부팅 시 자동 시작됨. GitHub Actions와 무관.
+
+### 4-4. Swap 메모리 설정 (필수)
 t3.small은 RAM 2GB로 모델 로딩 시 OOM 발생. Swap 2GB 추가 필수.
 ```bash
 sudo fallocate -l 2G /swapfile
@@ -91,27 +114,27 @@ echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
 
 확인: `free -h` 실행 시 Swap 2.0Gi 표시되면 정상.
 
-### 4-3. 코드 다운로드
+### 4-5. 코드 다운로드
 ```bash
 git clone https://github.com/GGARA02/banuzil-ai-server.git
 cd banuzil-ai-server
 ```
 
-### 4-4. 모델 파일 전송 (로컬 CMD에서)
+### 4-6. 모델 파일 전송 (로컬 CMD에서)
 ```bash
 scp -i "<pem 경로>/banuzil-key.pem" \
     "<로컬 경로>/models/concat_unweight/best_model.pt" \
     ubuntu@15.135.116.29:~/banuzil-ai-server/models/concat_unweight/
 ```
 
-### 4-5. .env 파일 전송 (로컬 CMD에서)
+### 4-7. .env 파일 전송 (로컬 CMD에서)
 ```bash
 scp -i "<pem 경로>/banuzil-key.pem" \
     "<로컬 경로>/.env" \
     ubuntu@15.135.116.29:~/banuzil-ai-server/.env
 ```
 
-### 4-6. Docker 빌드 및 실행
+### 4-8. Docker 빌드 및 실행
 ```bash
 cd ~/banuzil-ai-server
 sudo docker compose up --build -d
@@ -209,7 +232,8 @@ sudo dmesg | grep -i "killed process" | tail -5
 ## 8. 향후 TODO
 
 - [x] **GitHub Actions** — push 시 EC2 자동 배포 완료
-- [ ] **도메인 연결** — IP 대신 도메인 주소 사용
-- [ ] **HTTPS (SSL)** — Let's Encrypt 인증서 발급 + Nginx 리버스 프록시
+- [x] **도메인 연결** — `banuzil-ai.duckdns.org` (DuckDNS 무료)
+- [x] **Nginx 리버스 프록시** — 포트 80 → 8000 전달 (`:8000` 생략 가능)
 - [x] **Swap 메모리** — 2GB Swap 설정 완료 (OOM 방지)
+- [ ] **HTTPS (SSL)** — Let's Encrypt 인증서 발급
 - [ ] **인스턴스 사양 업그레이드** — Swap으로도 부족 시 t3.medium (4GB)으로 변경
