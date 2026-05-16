@@ -155,6 +155,20 @@
         <button class="btn-primary" onclick="initSession()">세션 시작</button>
       </div>
       <div id="sessionInfo" class="info-card hidden"></div>
+      <!-- AI 옵션 토글 -->
+      <div>
+        <div style="font-size:11px;font-weight:600;margin-bottom:5px;">AI 옵션</div>
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;margin-top:3px;">
+          <input type="checkbox" id="bulletEnabled">
+          <span style="font-size:11px;">총알잡기 (Bullet Detection)</span>
+        </label>
+        <div style="font-size:10px;color:var(--muted);margin-top:2px;line-height:1.5;">기본 OFF. DSPy 기반 공격/불신 발화 감지.</div>
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;margin-top:6px;">
+          <input type="checkbox" id="selfRefineEnabled">
+          <span style="font-size:11px;">Self-Refine (중립성 검사 + 재생성)</span>
+        </label>
+        <div style="font-size:10px;color:var(--muted);margin-top:2px;line-height:1.5;">기본 OFF. 비활성화 시 토큰 절약.</div>
+      </div>
       <!-- 자동 테스트 -->
       <div>
         <div style="font-size:11px;font-weight:600;margin-bottom:5px;">자동 테스트</div>
@@ -475,11 +489,16 @@ async function sendRound() {
         '&user_id=' + STATE.mUserId + '&round_number=' + rn + '&content=' + encodeURIComponent(mReply), null);
     }
 
-    const data = await api('POST', '/ai/round-analyze', {
+    const payload = {
       session_id: STATE.sessionId,
       f_reply:    fReply,
       m_reply:    mReply,
-    });
+    };
+    if (document.getElementById('bulletEnabled').checked) payload.bullet_enabled = true;
+    else payload.bullet_enabled = false;
+    if (!document.getElementById('selfRefineEnabled').checked) payload.max_refine = 0;
+
+    const data = await api('POST', '/ai/round-analyze', payload);
 
     STATE.roundNum += 1;
     updatePills();

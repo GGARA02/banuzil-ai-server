@@ -69,6 +69,8 @@ async def round_analyze(req: RoundAnalyzeRequest):
         cycle_definition = ctx["cycle_definition"],
         cycle_skip_until = ctx["cycle_skip_until"],
         round_num        = ctx["round_num"],
+        bullet_enabled   = req.bullet_enabled,
+        max_refine       = req.max_refine,
     )
 
     try:
