@@ -9,13 +9,13 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 import os
 
-from routers import emotion, counseling
+from routers import emotion, counseling, mock_router
 from services.supabase_client import supa
 
 app = FastAPI(
     title       = "바느질 AI 서버",
-    description = "EFT 상담 AI + KoELECTRA 감성 분석 서버 (Stateless)",
-    version     = "3.0.0",
+    description = "EFT 상담 AI + KoELECTRA 감성 분석 서버 (DB-centric)",
+    version     = "4.0.0",
 )
 
 # CORS — 개발 중 전체 허용
@@ -28,6 +28,7 @@ app.add_middleware(
 
 app.include_router(emotion.router)
 app.include_router(counseling.router)
+app.include_router(mock_router.router)
 
 # 테스트 클라이언트 HTML 서빙
 @app.get("/test")
