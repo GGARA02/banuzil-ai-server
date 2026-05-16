@@ -426,7 +426,13 @@ async function api(method, path, body) {
       headers: {'Content-Type': 'application/json'},
       body: body ? JSON.stringify(body) : undefined,
     });
-    const data = await res.json();
+    const text = await res.text();
+    let data;
+    try {
+      data = JSON.parse(text);
+    } catch {
+      throw new Error(`${res.status} ${path} — 서버가 JSON이 아닌 응답 반환 (HTML?). 서버 로그를 확인하세요.`);
+    }
     if (!res.ok) throw new Error(data.detail || res.statusText);
     log('res', `${res.status} <- ${JSON.stringify(data).slice(0, 300)}`);
     setDot('ok');
