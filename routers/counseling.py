@@ -1,8 +1,8 @@
 # ============================================================
-# routers/counseling.py — 상담 AI 라우터 (Stateless 버전)
+# routers/counseling.py — 상담 AI 라우터 (DB-centric 버전)
 #
-# Spring이 하는 것: 세션 생명주기, DB 영속화, 상태 추적
-# Python이 하는 것: 요청마다 분석 → 결과 반환 (상태 미보유)
+# AI 서버가 Supabase에서 직접 세션 상태를 조회하고 저장한다.
+# Spring은 session_id + 발화만 전달.
 #
 # 엔드포인트:
 #   POST /ai/round-analyze — 라운드 분석 (핵심)
@@ -11,40 +11,29 @@
 # ============================================================
 
 import asyncio
+import logging
 from fastapi import APIRouter, HTTPException
 
 from schemas.request import RoundAnalyzeRequest, CycleRequest, ReportRequest
 from schemas.response import (
     RoundAnalyzeResponse,
     CycleExploreResponse, CycleDefinitionResponse,
-    ReportResponse,
+    ReportResponse, ReportSections,
 )
-from services.attachment_service import build_couple_profile
+from services.session_service import (
+    fetch_session_context, save_round_result,
+    save_cycle_definition, save_report,
+)
 from services.report_service import generate_report
 from graphs.eft_graph import get_eft_graph, create_initial_state
 from services.llm import call_llm
-from config.prompts.stage_prompts import SignalState
 from config.prompts.eft_base import (
     build_cycle_explore_prompt, build_cycle_definition_prompt,
 )
 from config.settings import EVAL_MODEL_NAME
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/ai", tags=["ai"])
-
-
-def _signals_to_dict(signals: SignalState) -> dict:
-    return {"f": dict(signals.f), "m": dict(signals.m)}
-
-
-def _signals_from_dict(d: dict | None) -> SignalState:
-    s = SignalState()
-    if not d:
-        return s
-    if "f" in d:
-        s.f.update(d["f"])
-    if "m" in d:
-        s.m.update(d["m"])
-    return s
 
 
 # ================================================================
@@ -54,41 +43,32 @@ def _signals_from_dict(d: dict | None) -> SignalState:
 async def round_analyze(req: RoundAnalyzeRequest):
     """
     EFT 상담 1라운드 분석.
-    Spring이 모든 컨텍스트를 보내면, AI가 분석 후 결과 + 업데이트된 상태를 반환.
-    Spring은 반환된 updated_* 필드를 DB에 저장하고 다음 라운드에 재전달.
+    1. DB에서 세션 컨텍스트 조회
+    2. LangGraph 실행
+    3. 결과 DB 저장
+    4. Spring에 메시지 + 플래그만 반환
     """
-    couple_profile = build_couple_profile(
-        session_id  = req.session_id,
-        f_anxiety   = req.f_anxiety,
-        f_avoidance = req.f_avoidance,
-        f_mbti      = req.f_mbti or "",
-        f_situation = "",
-        m_anxiety   = req.m_anxiety,
-        m_avoidance = req.m_avoidance,
-        m_mbti      = req.m_mbti or "",
-        m_situation = "",
-    )
+    # 1. DB 조회
+    try:
+        ctx = await fetch_session_context(req.session_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
 
-    signals = _signals_from_dict(req.signals)
-
+    # 2. 그래프 실행
     state = create_initial_state(
-        session_id       = req.session_id,
-        couple_profile   = couple_profile,
+        session_id       = str(req.session_id),
+        couple_profile   = ctx["couple_profile"],
         f_reply          = req.f_reply,
         m_reply          = req.m_reply,
-        f_history        = req.f_history,
-        m_history        = req.m_history,
-        eft_stage        = req.eft_stage,
-        stage_rounds     = req.stage_rounds,
-        stage_progress   = req.stage_progress,
-        signals          = signals,
-        cycle_definition = req.cycle_definition,
-        cycle_skip_until = req.cycle_skip_until,
-        round_num        = req.round_num,
-        model_name       = req.model_name,
-        bullet_enabled   = req.bullet_enabled,
-        emotion_weight   = req.emotion_weight,
-        max_refine       = req.max_refine,
+        f_history        = ctx["f_history"],
+        m_history        = ctx["m_history"],
+        eft_stage        = ctx["eft_stage"],
+        stage_rounds     = ctx["stage_rounds"],
+        stage_progress   = ctx["stage_progress"],
+        signals          = ctx["signals"],
+        cycle_definition = ctx["cycle_definition"],
+        cycle_skip_until = ctx["cycle_skip_until"],
+        round_num        = ctx["round_num"],
     )
 
     try:
@@ -97,54 +77,19 @@ async def round_analyze(req: RoundAnalyzeRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"상담 AI 오류: {str(e)}")
 
-    f_resp = result.get("f_response", "")
-    m_resp = result.get("m_response", "")
+    # 3. DB 저장
+    try:
+        await save_round_result(req.session_id, ctx, result)
+    except Exception as e:
+        logger.error(f"[{req.session_id}] DB 저장 실패: {e}")
 
-    # 히스토리에 현재 라운드 추가
-    updated_f_history = req.f_history + [
-        {"role": "user",      "content": req.f_reply},
-        {"role": "assistant", "content": f_resp},
-    ]
-    updated_m_history = req.m_history + [
-        {"role": "user",      "content": req.m_reply},
-        {"role": "assistant", "content": m_resp},
-    ]
-
-    # 위험 감지 시에도 상담 계속 진행 — risk_flag만 응답에 포함하여 Spring이 별도 처리
-    updated_signals = result.get("signals", signals)
-    eval_scores     = result.get("eval_scores") or {}
-    nr              = result.get("neutrality_result") or {}
-
-    neutrality_for_spring = {
-        "score":           nr.get("score"),
-        "bias_direction":  nr.get("bias_direction", "none"),
-        "passed":          nr.get("passed", True),
-        "violations":      nr.get("violations", []),
-        "regen_triggered": nr.get("regen_triggered", False),
-    } if nr else None
-
+    # 4. 응답
     return RoundAnalyzeResponse(
-        session_id               = req.session_id,
-        f_message                = f_resp,
-        m_message                = m_resp,
-        updated_eft_stage        = result.get("eft_stage", req.eft_stage),
-        updated_stage_rounds     = result.get("stage_rounds", req.stage_rounds),
-        updated_stage_progress   = result.get("stage_progress", req.stage_progress),
-        updated_signals          = _signals_to_dict(updated_signals),
-        updated_f_history        = updated_f_history,
-        updated_m_history        = updated_m_history,
-        needs_cycle_definition   = result.get("needs_cycle_definition", False),
-        cycle_skip_until         = result.get("cycle_skip_until", req.cycle_skip_until),
-        bullet_detected          = result.get("bullet_detected", False),
-        bullet_type              = result.get("bullet_type", "None"),
-        eval_score               = eval_scores.get("weighted_avg"),
-        eval_scores              = eval_scores or None,
-        neutrality_result        = neutrality_for_spring,
-        f_emotion                = result.get("f_emotion_data"),
-        m_emotion                = result.get("m_emotion_data"),
-        risk_flag                = result.get("risk_flag", False),
-        risk_category            = result.get("risk_category", ""),
-        risk_keywords            = result.get("risk_keywords_found", []),
+        session_id             = req.session_id,
+        f_message              = result.get("f_response", ""),
+        m_message              = result.get("m_response", ""),
+        needs_cycle_definition = result.get("needs_cycle_definition", False),
+        risk_flag              = result.get("risk_flag", False),
     )
 
 
@@ -157,19 +102,23 @@ async def cycle_analyze(req: CycleRequest):
     사이클 탐색 또는 정의.
     답변 없이 호출 → 탐색 질문 생성
     답변 포함 호출 → 사이클 정의 생성
-    동의 처리는 Spring이 DB에서 직접 관리.
     """
+    # DB에서 히스토리 조회
+    try:
+        ctx = await fetch_session_context(req.session_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
     f_hist_text = "\n".join(
         f"{'여성' if h['role']=='user' else 'AI'}: {h['content'][:200]}"
-        for h in req.f_history
+        for h in ctx["f_history"]
     )
     m_hist_text = "\n".join(
         f"{'남성' if h['role']=='user' else 'AI'}: {h['content'][:200]}"
-        for h in req.m_history
+        for h in ctx["m_history"]
     )
 
     if not req.f_explore_answer and not req.m_explore_answer:
-        # 답변 없음 → 탐색 질문 생성
         f_q, m_q = await asyncio.gather(
             call_llm("", build_cycle_explore_prompt(True,  f_hist_text),
                       model=EVAL_MODEL_NAME, max_tokens=400),
@@ -177,13 +126,11 @@ async def cycle_analyze(req: CycleRequest):
                       model=EVAL_MODEL_NAME, max_tokens=400),
         )
         return CycleExploreResponse(
-            session_id  = req.session_id,
-            f_question  = f_q.strip(),
-            m_question  = m_q.strip(),
-            cycle_round = 1,
+            session_id = req.session_id,
+            f_question = f_q.strip(),
+            m_question = m_q.strip(),
         )
     else:
-        # 답변 있음 → 사이클 정의 생성
         definition = await call_llm(
             "", build_cycle_definition_prompt(
                 f_hist_text, m_hist_text,
@@ -192,9 +139,13 @@ async def cycle_analyze(req: CycleRequest):
             ),
             model=EVAL_MODEL_NAME, max_tokens=600,
         )
+        definition = definition.strip()
+
+        await save_cycle_definition(req.session_id, definition)
+
         return CycleDefinitionResponse(
             session_id       = req.session_id,
-            cycle_definition = definition.strip(),
+            cycle_definition = definition,
         )
 
 
@@ -205,32 +156,35 @@ async def cycle_analyze(req: CycleRequest):
 async def generate_final_report(req: ReportRequest):
     """
     세션 히스토리 전체를 바탕으로 최종 보고서 생성.
-    Spring이 DB에서 꺼낸 히스토리 + 프로필을 전달.
+    DB에서 모든 데이터를 직접 조회.
     """
-    couple_profile = build_couple_profile(
-        session_id  = req.session_id,
-        f_anxiety   = req.f_anxiety,
-        f_avoidance = req.f_avoidance,
-        f_mbti      = req.f_mbti or "",
-        f_situation = "",
-        m_anxiety   = req.m_anxiety,
-        m_avoidance = req.m_avoidance,
-        m_mbti      = req.m_mbti or "",
-        m_situation = "",
-    )
+    try:
+        ctx = await fetch_session_context(req.session_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
 
     try:
-        f_report, m_report = await generate_report(
-            couple_profile   = couple_profile,
-            f_history        = req.f_history,
-            m_history        = req.m_history,
-            cycle_definition = req.cycle_definition,
+        f_sections, m_sections = await generate_report(
+            couple_profile   = ctx["couple_profile"],
+            f_history        = ctx["f_history"],
+            m_history        = ctx["m_history"],
+            cycle_definition = ctx["cycle_definition"],
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"보고서 생성 오류: {str(e)}")
 
+    # DB 저장
+    try:
+        await save_report(
+            req.session_id,
+            ctx["f_user_id"], ctx["m_user_id"],
+            f_sections, m_sections,
+        )
+    except Exception as e:
+        logger.error(f"[{req.session_id}] 보고서 DB 저장 실패: {e}")
+
     return ReportResponse(
         session_id = req.session_id,
-        f_report   = f_report,
-        m_report   = m_report,
+        f_report   = ReportSections(**f_sections),
+        m_report   = ReportSections(**m_sections),
     )
