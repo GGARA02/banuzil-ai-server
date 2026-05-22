@@ -116,7 +116,7 @@ async def fetch_session_context(session_id: int) -> dict:
         "f_history": f_history,
         "m_history": m_history,
         "eft_stage": session.get("eft_stage", 1),
-        "stage_rounds": session.get("stage_rounds", {1: 0, 2: 0, 3: 0}),
+        "stage_rounds": session.get("stage_rounds") or {"1": 0, "2": 0, "3": 0},
         "stage_progress": session.get("stage_progress", 0),
         "signals": signals,
         "cycle_definition": session.get("cycle_definition", ""),

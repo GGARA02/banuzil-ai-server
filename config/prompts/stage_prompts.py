@@ -204,7 +204,7 @@ def build_stage_instruction(
 # ── EFT 진행도 평가 프롬프트 ─────────────────────────────
 def build_eval_prompt(
     eft_stage: int,
-    stage_rounds: dict[int, int],
+    stage_rounds: dict[str, int],
     signals: SignalState,
     couple_combo: str,
     f_type: str, f_anxiety: float, f_avoidance: float,
@@ -217,7 +217,7 @@ def build_eval_prompt(
     라운드 종료 후 EFT 진행도 평가 GPT 호출 프롬프트.
     v12 HTML evaluateEFTProgress() evalPrompt 이식.
     """
-    cur_stage_rounds = stage_rounds.get(eft_stage, 0)
+    cur_stage_rounds = stage_rounds.get(str(eft_stage), stage_rounds.get(eft_stage, 0))
     can_advance      = cur_stage_rounds >= 2
 
     f_sigs = signals.f
