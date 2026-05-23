@@ -532,6 +532,11 @@ async function sendRound() {
     addMsg('f', 'ai', `AI -> 여성 R${STATE.roundNum}`, data.f_message);
     addMsg('m', 'ai', `AI -> 남성 R${STATE.roundNum}`, data.m_message);
 
+    // 라운드별 단계·진행도 기록 (채팅 + 요청 로그)
+    const stageLabel = {1:'1단계 갈등완화', 2:'2단계 재구성', 3:'3단계 공고화'}[STATE.eftStage] || `${STATE.eftStage}단계`;
+    addSys(`R${STATE.roundNum} · ${stageLabel} · 진행도 ${STATE.stageProgress}%`);
+    log('inf', `R${STATE.roundNum} | stage=${STATE.eftStage} | progress=${STATE.stageProgress}%`);
+
     if (data.needs_cycle_definition) {
       addSys('사이클 정의 절차 필요');
       STATE.needsCycle = true;
@@ -631,15 +636,61 @@ function hideCycleBox() {
 // ================================================================
 async function triggerReport() {
   if (!STATE.active) return alert('세션 없음');
-  addSys('보고서 생성 중...');
+  addSys('보고서 생성 중... (수십 초 걸릴 수 있어요)');
+  let data;
   try {
-    const data = await api('POST', '/ai/report', {
-      session_id: STATE.sessionId,
-    });
-    const w = window.open('', '_blank', 'width=900,height=700');
-    w.document.write(buildReportHtml(data));
-    addSys('보고서 생성 완료');
-  } catch (e) {}
+    data = await api('POST', '/ai/report', { session_id: STATE.sessionId });
+  } catch (e) {
+    addSys('보고서 생성 실패(서버): ' + e.message);   // 서버 오류를 화면에 노출
+    log('err', '보고서 오류: ' + e.message);
+    return;
+  }
+  try {
+    showReportOverlay(data);                          // 팝업 차단 회피: 페이지 내 오버레이
+    addSys('보고서 생성 완료 — 화면에 표시됨');
+  } catch (e) {
+    addSys('보고서 표시 실패: ' + e.message);
+    log('err', e.message);
+  }
+}
+
+// 보고서를 새 창(팝업) 대신 현재 페이지 오버레이로 표시 (팝업 차단기에 안 막힘)
+function showReportOverlay(data) {
+  const labels = {emotion_summary:'감정 요약', partner_understanding:'파트너 이해',
+                  mediation_plans:'중재 계획', recommended_dialogues:'권장 대화'};
+  function sections(report) {
+    report = report || {};
+    let h = '';
+    for (const [k, l] of Object.entries(labels)) {
+      h += `<div style="margin-bottom:14px;"><div style="font-weight:600;color:#1565c0;border-bottom:1px solid #e0e0e0;padding-bottom:4px;margin-bottom:6px;">${l}</div>`
+         + `<pre style="white-space:pre-wrap;word-break:break-word;background:#fff;padding:12px;border:1px solid #e0e0e0;border-radius:6px;font-family:inherit;font-size:12px;line-height:1.7;margin:0;">${escR(report[k] || '(빈 값)')}</pre></div>`;
+    }
+    return h;
+  }
+  const old = document.getElementById('reportOverlay');
+  if (old) old.remove();
+  const ov = document.createElement('div');
+  ov.id = 'reportOverlay';
+  ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:9999;display:flex;align-items:center;justify-content:center;';
+  ov.innerHTML = `<div style="background:#fafafa;max-width:860px;width:90%;max-height:85vh;overflow:auto;border-radius:10px;padding:24px;position:relative;">
+    <button id="reportClose" style="position:absolute;top:12px;right:12px;border:none;background:#eee;border-radius:6px;padding:6px 12px;cursor:pointer;">닫기 ✕</button>
+    <h2 style="margin:0 0 14px;">최종 보고서</h2>
+    <div style="margin-bottom:12px;">
+      <span class="rtab" data-t="f" style="cursor:pointer;padding:6px 14px;border-bottom:2px solid #1976d2;color:#1976d2;font-weight:600;">여성 보고서</span>
+      <span class="rtab" data-t="m" style="cursor:pointer;padding:6px 14px;color:#888;">남성 보고서</span>
+    </div>
+    <div id="rpf">${sections(data.f_report)}</div>
+    <div id="rpm" style="display:none;">${sections(data.m_report)}</div>
+  </div>`;
+  document.body.appendChild(ov);
+  document.getElementById('reportClose').onclick = () => ov.remove();
+  ov.querySelectorAll('.rtab').forEach(t => t.onclick = () => {
+    const isF = t.dataset.t === 'f';
+    document.getElementById('rpf').style.display = isF ? 'block' : 'none';
+    document.getElementById('rpm').style.display = isF ? 'none' : 'block';
+    ov.querySelectorAll('.rtab').forEach(x => { x.style.color = '#888'; x.style.borderBottom = 'none'; x.style.fontWeight = '400'; });
+    t.style.color = '#1976d2'; t.style.borderBottom = '2px solid #1976d2'; t.style.fontWeight = '600';
+  });
 }
 
 function buildReportHtml(data) {
@@ -802,12 +853,15 @@ async function generateUtterances(round) {
   const scenario    = SCENARIOS[scenarioKey];
 
   if (round === 1) {
-    const sys = `당신은 커플 상담 시나리오 테스터입니다.
+    const sys = `당신은 커플 상담 시나리오 테스터입니다. 진짜 사람을 연기하세요.
 [갈등 배경] ${scenario.context}
 
-두 사람이 상담에 처음 와서 각자 자신이 겪고 있는 상황을 상담사에게 처음으로 말하는 장면입니다.
-서로 대화하는 게 아니라 각자 상담사에게 이야기하는 것입니다.
-각 발화는 2~4문장, 구어체로 자연스럽게. 반드시 JSON: {"f": "여성 발화", "m": "남성 발화"}`;
+두 사람이 상담에 처음 와서 각자 자기 상황을 상담사에게 털어놓는 장면입니다. 서로 대화하는 게 아니라 각자 상담사에게 말합니다.
+[말투 규칙]
+- 실제 사람이 말하듯 구어체로, 1~2문장 짧게. 너무 정리된 문어체·모범답안 금지.
+- 감정이 앞서서 두서없거나, 불만을 툭 던지거나, 말끝을 흐려도 됩니다.
+- 여성은 서운하고 불안한 쪽, 남성은 답답하고 방어적인 쪽으로 자연스럽게.
+반드시 JSON: {"f": "여성 발화", "m": "남성 발화"}`;
 
     return await callGpt(sys, scenario.round1Prompt);
   }
@@ -816,15 +870,22 @@ async function generateUtterances(round) {
   const lastFAI = getLastAiMsg('f');
   const lastMAI = getLastAiMsg('m');
 
-  const fSys = `당신은 커플 상담 테스터입니다. 여성 내담자 역할을 하세요.
-[갈등 배경] ${scenario.context}
-라운드 ${round}.
-상담사의 말에 자연스럽게 반응하세요. 1~3문장, 구어체. 반드시 JSON: {"f": "여성 발화"}`;
+  const realGuide = `[말투 규칙]
+- 실제 사람처럼 구어체로, 1~2문장 짧게. 문어체·모범답안 금지.
+- 매번 곧바로 깨닫거나 상담사 말에 다 수긍하지 마세요. 가끔은 서운함을 반복하거나, 방어적이거나, 회피하거나, "글쎄요", "그건 좀..." 처럼 망설여도 됩니다.
+- 감정 변화는 천천히. 라운드가 꽤 지나야 조금씩 마음이 풀리는 게 자연스럽습니다.`;
 
-  const mSys = `당신은 커플 상담 테스터입니다. 남성 내담자 역할을 하세요.
+  const fSys = `당신은 커플 상담 테스터입니다. 여성 내담자(서운하고 불안한 쪽, 자꾸 확인받고 싶어 함)를 연기하세요.
 [갈등 배경] ${scenario.context}
 라운드 ${round}.
-상담사의 말에 자연스럽게 반응하세요. 1~3문장, 구어체. 반드시 JSON: {"m": "남성 발화"}`;
+${realGuide}
+반드시 JSON: {"f": "여성 발화"}`;
+
+  const mSys = `당신은 커플 상담 테스터입니다. 남성 내담자(답답하고 방어적인 쪽, 추궁받으면 움츠러듦)를 연기하세요.
+[갈등 배경] ${scenario.context}
+라운드 ${round}.
+${realGuide}
+반드시 JSON: {"m": "남성 발화"}`;
 
   const [fRes, mRes] = await Promise.all([
     callGpt(fSys, `상담사가 나에게 한 말: "${lastFAI}"\n이에 대한 나의 반응을 작성하세요.`),
@@ -855,14 +916,14 @@ async function autoHandleCycle() {
 
   // 2) GPT가 각 역할로 탐색 질문에 답변
   setAutoStatus('사이클 탐색 답변 생성 중...');
-  const fSys = `당신은 커플 상담 테스터입니다. 여성 내담자 역할을 하세요.
+  const fSys = `당신은 커플 상담 테스터입니다. 여성 내담자(서운하고 불안한 쪽)를 연기하세요.
 [갈등 배경] ${scenario.context}
-상담사가 두 사람의 반복되는 감정 패턴을 탐색하는 질문을 했습니다. 솔직하고 자연스럽게 답하세요.
-1~3문장, 구어체. 반드시 JSON: {"answer": "여성 답변"}`;
-  const mSys = `당신은 커플 상담 테스터입니다. 남성 내담자 역할을 하세요.
+상담사가 두 사람의 반복되는 감정 패턴을 탐색하는 질문을 했습니다. 실제 사람처럼 구어체로 1~2문장, 솔직하게 답하세요. 정리된 모범답안 말고 진짜 말하듯이.
+반드시 JSON: {"answer": "여성 답변"}`;
+  const mSys = `당신은 커플 상담 테스터입니다. 남성 내담자(답답하고 방어적인 쪽)를 연기하세요.
 [갈등 배경] ${scenario.context}
-상담사가 두 사람의 반복되는 감정 패턴을 탐색하는 질문을 했습니다. 솔직하고 자연스럽게 답하세요.
-1~3문장, 구어체. 반드시 JSON: {"answer": "남성 답변"}`;
+상담사가 두 사람의 반복되는 감정 패턴을 탐색하는 질문을 했습니다. 실제 사람처럼 구어체로 1~2문장, 솔직하게 답하세요. 정리된 모범답안 말고 진짜 말하듯이.
+반드시 JSON: {"answer": "남성 답변"}`;
 
   const [fAns, mAns] = await Promise.all([
     callGpt(fSys, `상담사 질문: "${explore.f_question}"\n이에 대한 나의 답변을 작성하세요.`),
@@ -953,6 +1014,13 @@ async function runAutoTest() {
           addSys(`사이클 절차 실패: ${e.message}`);
           log('err', e.message);
         }
+      }
+
+      // 실제 종료 조건(3단계 + 진행도 90%) 도달 시 조기 종료 (Spring 동작과 동일)
+      if (STATE.eftStage >= 3 && STATE.stageProgress >= 90) {
+        addSys(`상담 종료 조건 도달 (3단계 · 진행도 ${STATE.stageProgress}%) — ${STATE.roundNum}라운드에서 종료`);
+        log('inf', `종료조건 도달: stage=${STATE.eftStage} progress=${STATE.stageProgress}% @R${STATE.roundNum}`);
+        break;
       }
 
       if (AUTO.stop) break;

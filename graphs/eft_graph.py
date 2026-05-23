@@ -359,9 +359,11 @@ async def node_response_generator(state: EFTState) -> EFTState:
         rag_context    = rag_context,
     )
 
-    # 단계 지침
-    f_stage_instruction = build_stage_instruction(True,  stage, signals, round_num=round_num)
-    m_stage_instruction = build_stage_instruction(False, stage, signals, round_num=round_num)
+    # 단계 지침 (3단계는 Step 8/9 분화를 위해 누적 라운드 전달)
+    _sr = state.get("stage_rounds") or {}
+    stage3_round = _sr.get("3", _sr.get(3, 0))
+    f_stage_instruction = build_stage_instruction(True,  stage, signals, round_num=round_num, stage3_round=stage3_round)
+    m_stage_instruction = build_stage_instruction(False, stage, signals, round_num=round_num, stage3_round=stage3_round)
 
     # 파트너 발화: 이번 라운드의 실제 발화를 사용 (상대방 말 전달용)
     f_hist = state.get("f_history", [])
@@ -627,11 +629,15 @@ async def node_stage_transition_check(state: EFTState) -> EFTState:
     elif new_stage > stage and cur_rounds < MIN_STAGE_ROUNDS:
         new_stage = stage
 
-    # 진행도: 3단계는 코드로 점증시켜 종료 트리거(progress>=90)를 보장한다.
-    # (eval 모델 progress에만 의존하면 3단계에서 90에 못 닿아 세션이 안 끝남)
+    # 진행도: 3단계는 코드로 점증시키되, Step 8(합의)→Step 9(공고화) 시간을 확보한다.
+    # s3 < 3 (Step 8: 일상 적용 합의) 동안은 75 이하로 묶어 조기 종료를 막고,
+    # s3 >= 3 (Step 9: 변화 서사 공고화) 부터 90까지 올려, 공고화가 1~2라운드 진행된 뒤 종료되게 한다.
     if new_stage == 3:
-        s3_rounds = stage_rounds.get("3", 0)    # 3단계 진입 라운드엔 0 → 40, 이후 +30씩
-        progress  = min(100, 40 + s3_rounds * 30)
+        s3 = stage_rounds.get("3", 0)
+        if s3 < 3:
+            progress = min(75, 40 + s3 * 18)        # 40 → 58 → 75 (Step 8, 종료 방지)
+        else:
+            progress = min(100, 78 + (s3 - 3) * 12) # 78 → 90 → 100 (Step 9, 90 도달 종료)
     else:
         progress = result.get("progress", state.get("stage_progress", 0))
 
