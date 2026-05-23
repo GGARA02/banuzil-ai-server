@@ -40,8 +40,12 @@ from config.prompts.eft_base import (
 )
 from config.prompts.stage_prompts import (
     SignalState, build_stage_instruction, build_eval_prompt,
-    STAGE1_SIGNALS,
+    STAGE1_SIGNALS, STAGE2_SIGNALS,
 )
+
+# 2단계가 이 라운드 수 이상 누적되고 양측 깊은 신호 합이 충분하면 3단계로 강제 진입
+# (eval 모델이 신호를 보수적으로 잡아 2단계에 무한 정체하는 것을 방지)
+STAGE2_FORCE_ROUNDS = 4
 
 
 # ── 위험 키워드 하드코딩 ──────────────────────────────────
@@ -290,7 +294,10 @@ def node_eft_stage_router(state: EFTState) -> EFTState:
         if round_num >= cycle_skip_until:
             signals = state.get("signals") or SignalState()
             keys1 = STAGE1_SIGNALS
-            if any(signals.f[k] for k in keys1) and any(signals.m[k] for k in keys1):
+            # 1단계가 2라운드 만에 끝나지 않도록, 양측 모두 신호 2개 이상일 때 사이클 진입
+            f_cnt = sum(1 for k in keys1 if signals.f.get(k))
+            m_cnt = sum(1 for k in keys1 if signals.m.get(k))
+            if f_cnt >= 2 and m_cnt >= 2:
                 is_cycle_round = True
 
     return {
@@ -607,9 +614,26 @@ async def node_stage_transition_check(state: EFTState) -> EFTState:
             new_stage = 2
         else:
             new_stage = 1   # 그 외에는 1단계 유지 (eval 모델이 함부로 못 올림)
-    # 2→3: MIN_STAGE_ROUNDS 미충족 시 차단
+    elif stage == 2:
+        # 양측 2단계 깊은 신호(취약성/공감/재관여/연화) 개수
+        f_deep = sum(1 for k in STAGE2_SIGNALS if signals.f.get(k))
+        m_deep = sum(1 for k in STAGE2_SIGNALS if signals.m.get(k))
+        if new_stage >= 3 and cur_rounds >= MIN_STAGE_ROUNDS:
+            new_stage = 3                       # eval이 신호 기반으로 3 제안
+        elif cur_rounds >= STAGE2_FORCE_ROUNDS and (f_deep + m_deep) >= 2:
+            new_stage = 3                       # 보조 게이트: 정체 방지 강제 진입
+        else:
+            new_stage = 2
     elif new_stage > stage and cur_rounds < MIN_STAGE_ROUNDS:
         new_stage = stage
+
+    # 진행도: 3단계는 코드로 점증시켜 종료 트리거(progress>=90)를 보장한다.
+    # (eval 모델 progress에만 의존하면 3단계에서 90에 못 닿아 세션이 안 끝남)
+    if new_stage == 3:
+        s3_rounds = stage_rounds.get("3", 0)    # 3단계 진입 라운드엔 0 → 40, 이후 +30씩
+        progress  = min(100, 40 + s3_rounds * 30)
+    else:
+        progress = result.get("progress", state.get("stage_progress", 0))
 
     # 1단계 사이클 동의 필요 여부 (eft_stage_router에서 선행 판단한 결과 활용)
     needs_cycle = state.get("is_cycle_round", False)
@@ -621,7 +645,7 @@ async def node_stage_transition_check(state: EFTState) -> EFTState:
         **state,
         "eft_stage":              new_stage,
         "prev_eft_stage":         prev_stage,
-        "stage_progress":         result.get("progress", state.get("stage_progress", 0)),
+        "stage_progress":         progress,
         "signals":                signals,
         "stage_transition_flag":  stage_changed,
         "next_stage":             new_stage if stage_changed else 0,

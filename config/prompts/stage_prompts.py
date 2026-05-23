@@ -271,6 +271,11 @@ def build_eval_prompt(
   }}
 }}
 신호 판단: 누적 기준. 이전에 확인된 신호는 true 유지.
+신호 판정을 너무 인색하게 하지 마라. 명시적 선언이 아니어도 다음이면 해당 신호를 true로 잡아라:
+- 내담자가 두려움·외로움·무가치함 등 약한 마음을 드러내면 → vulnerability=true
+- 내담자가 상대의 행동을 이해·공감하는 말을 하면 → empathy=true, otherSide=true
+- 회피하던 쪽이 관계에 다가가려는 의지를 보이면 → withdrawer_reengagement=true
+- 비난하던 쪽이 부드러워지며 속마음을 꺼내면 → blamer_softening=true
 현재까지 확인된 신호:
 여성: emotion={f_sigs['emotion']}, patternAware={f_sigs['patternAware']}, otherSide={f_sigs['otherSide']}, relationConcern={f_sigs['relationConcern']}, vulnerability={f_sigs['vulnerability']}, empathy={f_sigs['empathy']}, withdrawer_reengagement={f_sigs['withdrawer_reengagement']}, blamer_softening={f_sigs['blamer_softening']}
 남성: emotion={m_sigs['emotion']}, patternAware={m_sigs['patternAware']}, otherSide={m_sigs['otherSide']}, relationConcern={m_sigs['relationConcern']}, vulnerability={m_sigs['vulnerability']}, empathy={m_sigs['empathy']}, withdrawer_reengagement={m_sigs['withdrawer_reengagement']}, blamer_softening={m_sigs['blamer_softening']}
