@@ -119,6 +119,14 @@ class MockSupabaseClient:
         logger.debug(f"[MockDB] DELETE {table}: {len(to_del)}건")
         return deepcopy(to_del)
 
+    async def rpc(self, function_name: str, params: dict | None = None) -> list[dict]:
+        """
+        Mock RPC. 벡터 검색(match_best_couple_session)은 mock에서 의미 없으므로
+        빈 결과를 반환하여 RAG가 자연스럽게 미적용되도록 한다.
+        """
+        logger.debug(f"[MockDB] RPC {function_name} → [] (mock 미지원, no-op)")
+        return []
+
     async def ping(self) -> bool:
         return True
 
@@ -179,6 +187,7 @@ def seed_mock_session(
         "detected_signals": None,
         "cycle_definition": "",
         "cycle_skip_until": 0,
+        "rag_context": "",
         "current_round": 1,
     })
 

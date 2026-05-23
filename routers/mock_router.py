@@ -43,8 +43,8 @@ async def mock_init_session(req: MockInitRequest):
         m_mbti      = req.m_mbti,
     )
 
-    # supa 싱글턴을 mock으로 교체
-    supa_module.supa = mock_supa
+    # 활성 클라이언트를 mock으로 전환 (프록시가 위임)
+    supa_module.set_mock_client(mock_supa)
 
     logger.info(f"[Mock] supa -> MockDB로 교체, 세션 #{req.session_id}")
 
@@ -81,9 +81,8 @@ async def mock_add_record(
 
 @router.post("/restore-supabase")
 async def mock_restore_supabase():
-    """supa를 원래 Supabase 클라이언트로 복원."""
-    from services.supabase_client import SupabaseClient
-    supa_module.supa = SupabaseClient()
+    """활성 클라이언트를 실제 Supabase로 복원."""
+    supa_module.restore_real_client()
     mock_supa.reset()
     logger.info("[Mock] supa -> 실제 Supabase로 복원")
     return {"status": "ok", "message": "Supabase 복원 완료"}

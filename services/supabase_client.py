@@ -110,5 +110,31 @@ class SupabaseClient:
             return False
 
 
-# 싱글턴 인스턴스
-supa = SupabaseClient()
+# ── 활성 클라이언트 프록시 ────────────────────────────────
+# `from services.supabase_client import supa`로 가져가도
+# mock 교체가 반영되도록 프록시를 통해 위임한다.
+# (직접 인스턴스를 import하면 교체 시점에 반영 안 되는 문제 해결)
+
+class _SupaProxy:
+    """현재 활성 클라이언트(실제 or mock)로 모든 호출을 위임."""
+    def __getattr__(self, name):
+        return getattr(_active_client, name)
+
+
+_real_client = SupabaseClient()
+_active_client = _real_client
+
+# 외부에 노출되는 핸들 (프록시)
+supa = _SupaProxy()
+
+
+def set_mock_client(mock_client) -> None:
+    """테스트용 mock 클라이언트로 전환."""
+    global _active_client
+    _active_client = mock_client
+
+
+def restore_real_client() -> None:
+    """실제 Supabase 클라이언트로 복원."""
+    global _active_client
+    _active_client = _real_client
