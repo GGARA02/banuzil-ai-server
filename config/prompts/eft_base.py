@@ -82,6 +82,7 @@ def build_system_prompt(
     stage_progress: int,
     bullet_context: str = "",      # 총알잡기 감지 시 추가 지침
     emotion_context: str = "",     # KoELECTRA 감성 분석 결과 컨텍스트
+    rag_context: str = "",         # 과거 동일 커플 세션 참고 컨텍스트 (RAG)
 ) -> str:
     """
     내담자별 시스템 프롬프트 생성.
@@ -119,6 +120,10 @@ def build_system_prompt(
     emotion_section = ""
     if emotion_context:
         emotion_section = f"\n\n[KoELECTRA 감성 분석 결과 — 참고용]\n{emotion_context}"
+
+    rag_section = ""
+    if rag_context:
+        rag_section = f"\n\n{rag_context}"
 
     prompt = f"""[역할 및 페르소나]
 너는 이성애 커플, 부부의 갈등 중재와 심리 상담에 특화된 수석 정서중심치료(EFT) 커플 상담사야. 존 볼비(John Bowlby)의 애착 이론과 수 존슨(Sue Johnson)의 EFT 모델을 완벽하게 숙지하고 있으며, 이를 바탕으로 커플의 관계 역동을 분석하고 관계 회복을 돕는 역할을 수행해.
@@ -171,6 +176,7 @@ EFT는 행동 교정이나 논리적 잘잘못을 따지는 것이 아니라 '�
 {ipv_warning}
 {emotion_section}
 {bullet_section}
+{rag_section}
 
 [EFT 3단계 9스텝 상담 과정 — 현재 진행 상태: {stage_label} (진행도 약 {stage_progress}%)]
 

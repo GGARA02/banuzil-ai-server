@@ -16,6 +16,7 @@
 | [`mediation_sessions`](#mediation_sessions) | EFT 상담 세션 |
 | [`mediation_records`](#mediation_records) | 라운드별 발화 및 AI 응답 기록 |
 | [`mediation_reports`](#mediation_reports) | 상담 종료 후 최종 보고서 |
+| [`session_embeddings`](#session_embeddings) | RAG용 세션 사이클 임베딩 (AI 서버 전용) |
 
 ---
 
@@ -32,6 +33,7 @@ users ──┬──< user_attachments
 
 mediation_sessions ──< mediation_records
 mediation_sessions ──< mediation_reports
+mediation_sessions ──< session_embeddings (ON DELETE CASCADE)
 ```
 
 ---
@@ -105,6 +107,7 @@ EFT 상담 세션. 1세션 = 1커플의 1회 상담 전체.
 | `detected_signals` | jsonb | | `{"f":{},"m":{}}` | 양측 EFT 신호 누적 상태 |
 | `cycle_definition` | text | | `''` | 부정적 상호작용 사이클 정의 텍스트 |
 | `cycle_skip_until` | integer | | `0` | 사이클 재시도 기준 라운드 (0=즉시 가능) |
+| `rag_context` | text | | `''` | RAG 검색 결과(과거 유사 세션 보고서 전문). 사이클 정의 시점에 1회 저장 |
 | `created_at` | timestamp | | | |
 | `updated_at` | timestamp | | | |
 
@@ -125,8 +128,9 @@ EFT 상담 세션. 1세션 = 1커플의 1회 상담 전체.
 }
 ```
 
-**AI 서버 관리 컬럼**: `eft_stage`, `stage_rounds`, `stage_progress`, `detected_signals`, `cycle_definition`, `cycle_skip_until`  
-**Spring이 읽는 컬럼**: `eft_stage` (UI 단계 표시), `cycle_definition` (사이클 동의 UI)
+**AI 서버 관리 컬럼**: `eft_stage`, `stage_rounds`, `stage_progress`, `detected_signals`, `cycle_definition`, `cycle_skip_until`, `rag_context`  
+**Spring이 읽는 컬럼**: `eft_stage` (UI 단계 표시), `cycle_definition` (사이클 동의 UI)  
+**Spring 미참조 컬럼**: `rag_context`는 AI 서버 전용. Spring은 읽지도 쓰지도 않음
 
 ---
 
@@ -176,6 +180,38 @@ EFT 상담 세션. 1세션 = 1커플의 1회 상담 전체.
 
 ---
 
+## session_embeddings
+
+RAG(동일 커플 과거 세션 검색)용 임베딩 저장소. **AI 서버 전용 테이블 — Spring 미참조.**  
+세션 종료 시 사이클 정의를 벡터화하여 1개 row 저장. 사이클 정의가 없는 세션은 저장하지 않음.
+
+> pgvector 확장 필요 (`CREATE EXTENSION vector`).  
+> 생성 SQL: `scripts/rag_migration.sql` / 롤백: `scripts/rag_rollback.sql`
+
+| 컬럼 | 타입 | NOT NULL | 설명 |
+|------|------|----------|------|
+| `id` | serial | ✅ PK | |
+| `session_id` | int | ✅ FK → mediation_sessions (UNIQUE, ON DELETE CASCADE) | 세션당 1개 |
+| `couple_key` | varchar | ✅ | `min(id)_max(id)` 형식. 동일 커플 검색 필터 |
+| `eft_final_stage` | smallint | | 세션 종료 시점 EFT 단계 (기본 3) |
+| `cycle_text` | text | ✅ | 사이클 정의 원문 (디버깅/확인용) |
+| `summary_text` | text | ✅ | 보고서 전문 (검색 히트 시 프롬프트 주입용) |
+| `embedding` | vector(1536) | ✅ | 사이클 정의 임베딩 (text-embedding-3-small) |
+| `created_at` | timestamptz | | |
+
+**인덱스**:
+- `idx_session_embeddings_couple` — `couple_key` (커플 필터)
+- `idx_session_embeddings_vector` — `embedding` ivfflat (벡터 유사도 검색)
+
+**검색 함수**: `match_best_couple_session(query_embedding, target_couple_key, exclude_session_id, similarity_threshold)`  
+→ 같은 커플 + 현재 세션 제외 + 유사도 ≥ threshold(기본 0.75) 중 최고 1건 반환
+
+**생성 주체**: AI 서버 (`services/rag/embedding_service.py`)  
+**조회 주체**: AI 서버 (`services/rag/retrieval_service.py`, RPC 호출)  
+**embedding 저장 형식**: pgvector는 `"[0.1,0.2,...]"` 문자열로 입력
+
+---
+
 ## 주요 흐름 요약
 
 ### 1. 회원가입 & 설문
@@ -201,8 +237,19 @@ mediation_records INSERT × 2 (여성, 남성 발화)
 → mediation_sessions UPDATE (eft_stage, detected_signals, stage_progress 등)
 ```
 
+### 4-1. 사이클 정의 생성 (1→2단계 전환 시) + RAG 검색
+```
+POST /ai/cycle (define 모드)
+→ mediation_sessions UPDATE (cycle_definition)
+→ [RAG] 사이클 정의 벡터화 → match_best_couple_session RPC
+   → 유사도 ≥ 0.75 과거 세션 발견 시
+     mediation_sessions UPDATE (rag_context = 과거 보고서 전문)
+→ 이후 2단계 라운드에서 rag_context를 시스템 프롬프트에 주입
+```
+
 ### 5. 상담 종료
 ```
 mediation_reports INSERT × 2 (여성 보고서, 남성 보고서)
-mediation_sessions UPDATE (status='completed')
+mediation_sessions UPDATE (status='completed')   ← Spring이 수행
+→ [RAG] 사이클 정의 벡터화 → session_embeddings INSERT (미래 세션 검색용)
 ```

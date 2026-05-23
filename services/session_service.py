@@ -122,6 +122,7 @@ async def fetch_session_context(session_id: int) -> dict:
         "cycle_definition": session.get("cycle_definition", ""),
         "cycle_skip_until": session.get("cycle_skip_until", 0),
         "round_num": session.get("current_round", 1),
+        "rag_context": session.get("rag_context", ""),
     }
 
 

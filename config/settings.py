@@ -80,6 +80,11 @@ SUPABASE_KEY: str = os.getenv("SUPABASE_KEY", "")
 # ── Spring 서버 연동 ──────────────────────────────────────
 SPRING_BASE_URL: str = os.getenv("SPRING_BASE_URL","http://localhost:8080")
 
-# ── RAG (차후 구현) ───────────────────────────────────────
+# ── RAG (동일 커플 과거 사이클 기반 검색) ────────────────────
 PGVECTOR_URL: str = os.getenv("PGVECTOR_URL","postgresql://localhost:5432/banuzil")
 EMBEDDING_MODEL: str = os.getenv("EMBEDDING_MODEL","text-embedding-3-small")
+RAG_ENABLED: bool = os.getenv("RAG_ENABLED","true").lower() == "true"
+# 이 유사도 이상인 과거 세션만 채택 (코사인 유사도 0~1)
+# 한국어 + text-embedding-3-small 실측: 유사 사이클 ~0.68, 무관 텍스트 ~0.13
+# → 0.55가 양쪽을 안전하게 가름 (실측 기반 튜닝값)
+RAG_SIMILARITY_THRESHOLD: float = float(os.getenv("RAG_SIMILARITY_THRESHOLD","0.55"))

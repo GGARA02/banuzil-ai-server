@@ -128,6 +128,9 @@ class EFTState(TypedDict):
     # 사이클 정의 모드 플래그
     cycle_mode:          str           # "" / "explore_f" / "explore_m" / "define"
 
+    # RAG — 과거 동일 커플 세션 참고 컨텍스트
+    rag_context:         str           # 빈 문자열이면 미적용
+
 
 _call_llm              = call_llm
 _call_llm_with_history = call_llm_with_history
@@ -326,6 +329,9 @@ async def node_response_generator(state: EFTState) -> EFTState:
     if f_em or m_em:
         emotion_context = "\n".join(filter(None, [f_em, m_em]))
 
+    # RAG 컨텍스트 (과거 동일 커플 세션, 사이클 정의 시점에 검색되어 주입됨)
+    rag_context = state.get("rag_context", "")
+
     # 시스템 프롬프트 (내담자별)
     f_sys = build_system_prompt(
         is_female      = True,
@@ -334,6 +340,7 @@ async def node_response_generator(state: EFTState) -> EFTState:
         stage_progress = state.get("stage_progress", 0),
         bullet_context = bullet_context,
         emotion_context= emotion_context,
+        rag_context    = rag_context,
     )
     m_sys = build_system_prompt(
         is_female      = False,
@@ -342,6 +349,7 @@ async def node_response_generator(state: EFTState) -> EFTState:
         stage_progress = state.get("stage_progress", 0),
         bullet_context = bullet_context,
         emotion_context= emotion_context,
+        rag_context    = rag_context,
     )
 
     # 단계 지침
@@ -678,6 +686,7 @@ def create_initial_state(
     cycle_skip_until: int = 0,
     end_agreed:     dict = None,
     round_num:      int = 1,
+    rag_context:    str = "",
     # 설정 오버라이드 (모두 변수화)
     model_name:     str = None,
     max_output_tokens: int = None,
@@ -714,6 +723,7 @@ def create_initial_state(
         cycle_skip_until       = cycle_skip_until,
         needs_cycle_definition = False,
         is_cycle_round         = False,
+        rag_context         = rag_context,
         f_emotion_data      = None,
         m_emotion_data      = None,
         bullet_detected     = False,

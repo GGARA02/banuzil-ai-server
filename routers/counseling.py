@@ -30,7 +30,7 @@ from services.llm import call_llm
 from config.prompts.eft_base import (
     build_cycle_explore_prompt, build_cycle_definition_prompt,
 )
-from config.settings import EVAL_MODEL_NAME
+from config.settings import EVAL_MODEL_NAME, RAG_ENABLED
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/ai", tags=["ai"])
@@ -69,6 +69,7 @@ async def round_analyze(req: RoundAnalyzeRequest):
         cycle_definition = ctx["cycle_definition"],
         cycle_skip_until = ctx["cycle_skip_until"],
         round_num        = ctx["round_num"],
+        rag_context      = ctx["rag_context"],
         bullet_enabled   = req.bullet_enabled,
         max_refine       = req.max_refine,
     )
@@ -145,6 +146,30 @@ async def cycle_analyze(req: CycleRequest):
 
         await save_cycle_definition(req.session_id, definition)
 
+        # RAG: 사이클 정의 생성 직후 동일 커플 과거 세션 검색.
+        # 히트 시 보고서 전문을 mediation_sessions.rag_context에 저장 → 2단계부터 프롬프트 주입.
+        if RAG_ENABLED:
+            try:
+                from services.rag.retrieval_service import find_best_past_session
+                from services.rag.rag_prompt_builder import build_rag_context
+                from services.supabase_client import supa
+
+                best = await find_best_past_session(
+                    f_user_id          = ctx["f_user_id"],
+                    m_user_id          = ctx["m_user_id"],
+                    current_session_id = req.session_id,
+                    cycle_definition   = definition,
+                )
+                rag_context = build_rag_context(best)
+                if rag_context:
+                    await supa.update(
+                        "mediation_sessions",
+                        {"session_id": f"eq.{req.session_id}"},
+                        {"rag_context": rag_context},
+                    )
+            except Exception as e:
+                logger.warning(f"[{req.session_id}] RAG 검색 실패 (무시): {e}")
+
         return CycleDefinitionResponse(
             session_id       = req.session_id,
             cycle_definition = definition,
@@ -184,6 +209,23 @@ async def generate_final_report(req: ReportRequest):
         )
     except Exception as e:
         logger.error(f"[{req.session_id}] 보고서 DB 저장 실패: {e}")
+
+    # RAG: 세션 사이클 정의를 벡터화하여 저장 (미래 세션 검색용).
+    # 사이클 정의가 없으면 자동 스킵. 실패해도 보고서 응답엔 영향 없음.
+    if RAG_ENABLED:
+        try:
+            from services.rag.embedding_service import save_session_embedding
+            await save_session_embedding(
+                session_id       = req.session_id,
+                f_user_id        = ctx["f_user_id"],
+                m_user_id        = ctx["m_user_id"],
+                cycle_definition = ctx["cycle_definition"],
+                f_report         = f_sections,
+                m_report         = m_sections,
+                eft_stage        = ctx["eft_stage"],
+            )
+        except Exception as e:
+            logger.warning(f"[{req.session_id}] 임베딩 저장 실패 (무시): {e}")
 
     return ReportResponse(
         session_id = req.session_id,

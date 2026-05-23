@@ -83,6 +83,20 @@ class SupabaseClient:
             res.raise_for_status()
             return res.json()
 
+    async def rpc(self, function_name: str, params: dict | None = None) -> list[dict]:
+        """
+        Postgres 함수(RPC) 호출. POST /rest/v1/rpc/{function_name}
+        벡터 검색 등 SQL 함수 실행용.
+        """
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            res = await client.post(
+                f"{self._base_url}/rpc/{function_name}",
+                headers=self._headers,
+                json=params or {},
+            )
+            res.raise_for_status()
+            return res.json()
+
     async def ping(self) -> bool:
         """연결 상태 확인"""
         try:
