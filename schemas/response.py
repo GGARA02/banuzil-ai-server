@@ -14,6 +14,9 @@ class RoundAnalyzeResponse(BaseModel):
     m_message: str
     needs_cycle_definition: bool = False
     risk_flag: bool = False
+    # 진행 상태 가시화용 (Spring은 무시 가능, 테스트/디버그·UI 표시용)
+    eft_stage: int = 1
+    stage_progress: int = 0
 
 
 class CycleExploreResponse(BaseModel):

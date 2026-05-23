@@ -215,6 +215,8 @@
   <div class="main">
     <div class="pills-row" id="pillsRow">
       <span class="pill" id="pillRound">라운드 0</span>
+      <span class="pill" id="pillStage">단계 1</span>
+      <span class="pill" id="pillProgress">진행도 0%</span>
     </div>
     <div class="tabs">
       <div class="tab active" onclick="switchTab('chat',this)">대화</div>
@@ -294,6 +296,9 @@ let STATE = {
   sessionId: null,
   active: false,
   roundNum: 0,
+  eftStage: 1,
+  stageProgress: 0,
+  needsCycle: false,
   busy: false,
   mockMode: true,
   fUserId: 100,
@@ -346,6 +351,9 @@ function setDot(s) { document.getElementById('statusDot').className = 'status-do
 
 function updatePills() {
   document.getElementById('pillRound').textContent = `라운드 ${STATE.roundNum}`;
+  const stageNames = {1: '1단계 갈등완화', 2: '2단계 재구성', 3: '3단계 공고화'};
+  document.getElementById('pillStage').textContent = stageNames[STATE.eftStage] || `단계 ${STATE.eftStage}`;
+  document.getElementById('pillProgress').textContent = `진행도 ${STATE.stageProgress}%`;
 }
 
 // ================================================================
@@ -379,6 +387,9 @@ async function initSession() {
   STATE.sessionId = sid;
   STATE.active    = true;
   STATE.roundNum  = 0;
+  STATE.eftStage  = 1;
+  STATE.stageProgress = 0;
+  STATE.needsCycle = false;
 
   document.getElementById('sessionBadge').textContent = `세션 #${sid}`;
   document.getElementById('sessionBadge').className = 'badge live';
@@ -416,6 +427,9 @@ async function resetSession() {
   STATE.active = false;
   STATE.sessionId = null;
   STATE.roundNum = 0;
+  STATE.eftStage = 1;
+  STATE.stageProgress = 0;
+  STATE.needsCycle = false;
   document.getElementById('sessionBadge').textContent = '세션 없음';
   document.getElementById('sessionBadge').className = 'badge';
   document.getElementById('sendBtn').disabled = true;
@@ -501,6 +515,11 @@ async function sendRound() {
     const data = await api('POST', '/ai/round-analyze', payload);
 
     STATE.roundNum += 1;
+    if (typeof data.eft_stage === 'number') {
+      if (data.eft_stage > STATE.eftStage) addSys(`▲ ${STATE.eftStage}단계 → ${data.eft_stage}단계 전환 (실제 eft_stage)`);
+      STATE.eftStage = data.eft_stage;
+    }
+    if (typeof data.stage_progress === 'number') STATE.stageProgress = data.stage_progress;
     updatePills();
     updateStateDebug();
 
@@ -515,7 +534,8 @@ async function sendRound() {
 
     if (data.needs_cycle_definition) {
       addSys('사이클 정의 절차 필요');
-      showCycleExplore();
+      STATE.needsCycle = true;
+      if (!AUTO.running) showCycleExplore();   // 수동 모드에서만 UI 표시 (자동은 루프가 처리)
     }
 
   } catch (e) {
@@ -589,14 +609,14 @@ async function generateCycleDef() {
     document.getElementById('lastCycleDef').style.display = 'block';
     document.getElementById('lastCycleDefText').textContent = cycleDef;
 
-    addSys('사이클 정의 완료 — 양측 동의 후 2단계 진입');
+    addSys('사이클 정의 완료 — 다음 라운드부터 AI가 2단계로 자동 전환합니다 (실제 eft_stage는 상단 단계 칩에서 확인)');
     updateStateDebug();
   } catch (e) {}
 }
 
 function agreeAllCycle() {
   document.getElementById('cycleBox').classList.add('hidden');
-  addSys('사이클 동의 완료 -> 2단계 진입');
+  addSys('사이클 동의 완료 — 다음 라운드 제출 시 단계 칩이 2단계로 바뀌면 정상 전환된 것');
   updateStateDebug();
 }
 
@@ -821,6 +841,54 @@ function getLastAiMsg(col) {
   return msgs[msgs.length - 1].textContent || '';
 }
 
+// 자동 테스트용 사이클 절차 처리: 탐색 질문 → GPT 자동 답변 → 사이클 정의 생성.
+// 모든 단계를 채팅창에 기록한다.
+async function autoHandleCycle() {
+  const scenario = SCENARIOS[document.getElementById('autoScenario').value] || SCENARIOS.contact;
+  setAutoStatus('사이클 탐색 질문 요청 중...');
+  addSys('── 사이클 절차 시작 ──');
+
+  // 1) 탐색 질문 받기
+  const explore = await api('POST', '/ai/cycle', { session_id: STATE.sessionId });
+  addMsg('f', 'system', '사이클 탐색 질문', explore.f_question);
+  addMsg('m', 'system', '사이클 탐색 질문', explore.m_question);
+
+  // 2) GPT가 각 역할로 탐색 질문에 답변
+  setAutoStatus('사이클 탐색 답변 생성 중...');
+  const fSys = `당신은 커플 상담 테스터입니다. 여성 내담자 역할을 하세요.
+[갈등 배경] ${scenario.context}
+상담사가 두 사람의 반복되는 감정 패턴을 탐색하는 질문을 했습니다. 솔직하고 자연스럽게 답하세요.
+1~3문장, 구어체. 반드시 JSON: {"answer": "여성 답변"}`;
+  const mSys = `당신은 커플 상담 테스터입니다. 남성 내담자 역할을 하세요.
+[갈등 배경] ${scenario.context}
+상담사가 두 사람의 반복되는 감정 패턴을 탐색하는 질문을 했습니다. 솔직하고 자연스럽게 답하세요.
+1~3문장, 구어체. 반드시 JSON: {"answer": "남성 답변"}`;
+
+  const [fAns, mAns] = await Promise.all([
+    callGpt(fSys, `상담사 질문: "${explore.f_question}"\n이에 대한 나의 답변을 작성하세요.`),
+    callGpt(mSys, `상담사 질문: "${explore.m_question}"\n이에 대한 나의 답변을 작성하세요.`),
+  ]);
+  addMsg('f', 'user-f', '사이클 탐색 답변', fAns.answer);
+  addMsg('m', 'user-m', '사이클 탐색 답변', mAns.answer);
+
+  // 3) 답변 포함하여 사이클 정의 생성
+  setAutoStatus('사이클 정의 생성 중...');
+  const def = await api('POST', '/ai/cycle', {
+    session_id: STATE.sessionId,
+    f_explore_answer: fAns.answer,
+    m_explore_answer: mAns.answer,
+  });
+  const cycleDef = def.cycle_definition || '';
+  addSys('[사이클 정의] ' + cycleDef);
+  // 우측 패널에도 표시
+  document.getElementById('lastCycleDef').style.display = 'block';
+  document.getElementById('lastCycleDefText').textContent = cycleDef;
+  addSys('── 사이클 절차 완료 — 다음 라운드에 2단계 전환 예상 ──');
+
+  STATE.needsCycle = false;
+  updateStateDebug();
+}
+
 async function runAutoTest() {
   if (AUTO.running) return;
   if (!document.getElementById('openaiKey').value.trim()) {
@@ -875,6 +943,16 @@ async function runAutoTest() {
       let waited = 0;
       while (STATE.busy && waited < 30000) {
         await sleep(200); waited += 200;
+      }
+
+      // 사이클 정의 절차가 필요하면 GPT가 자동으로 답변·정의 생성 (채팅창에 기록)
+      if (STATE.needsCycle && !AUTO.stop) {
+        try {
+          await autoHandleCycle();
+        } catch (e) {
+          addSys(`사이클 절차 실패: ${e.message}`);
+          log('err', e.message);
+        }
       }
 
       if (AUTO.stop) break;

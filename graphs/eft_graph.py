@@ -378,7 +378,8 @@ async def node_response_generator(state: EFTState) -> EFTState:
         m_stage_instruction += f"\n\n{extra}"
 
     # 사이클 진입 라운드 여부 (eft_stage_router에서 선행 판단)
-    is_cycle_round = state.get("is_cycle_round", False)
+    is_cycle_round  = state.get("is_cycle_round", False)
+    bullet_detected = state.get("bullet_detected", False)
 
     # 유저 메시지
     f_user_msg = build_user_message(
@@ -389,6 +390,7 @@ async def node_response_generator(state: EFTState) -> EFTState:
         self_reply          = state.get("f_reply", ""),
         stage_instruction   = f_stage_instruction,
         is_cycle_round      = is_cycle_round,
+        bullet_detected     = bullet_detected,
     )
     m_user_msg = build_user_message(
         is_female           = False,
@@ -398,6 +400,7 @@ async def node_response_generator(state: EFTState) -> EFTState:
         self_reply          = state.get("m_reply", ""),
         stage_instruction   = m_stage_instruction,
         is_cycle_round      = is_cycle_round,
+        bullet_detected     = bullet_detected,
     )
 
     # 병렬 GPT 호출 (편향 방지 핵심)
@@ -593,12 +596,19 @@ async def node_stage_transition_check(state: EFTState) -> EFTState:
 
     # 단계 후퇴 없음 보장
     new_stage = max(stage, min(3, result.get("stage", stage)))
-    # 1→2 전진은 사이클 동의 절차가 처리, 여기서는 막음
-    if new_stage == 2 and stage == 1:
-        new_stage = 1
-    # 2→3: MIN_STAGE_ROUNDS 미충족 시 차단 (문자열 키로 조회)
     stage_rounds = state.get("stage_rounds", {})
-    if new_stage > stage and stage_rounds.get(str(stage), stage_rounds.get(stage, 0)) < MIN_STAGE_ROUNDS:
+    cur_rounds   = stage_rounds.get(str(stage), stage_rounds.get(stage, 0))
+
+    # 1→2 전진: eval 모델이 아니라 코드가 직접 처리한다.
+    # 사이클 정의가 존재하면(=사이클 탐색·정의 절차 완료) 1단계 최소 라운드 충족 시 2단계 진입.
+    # (Spring/AI 어디에도 별도 '동의' 신호 통로가 없으므로 cycle_definition 존재를 진입 트리거로 사용)
+    if stage == 1:
+        if state.get("cycle_definition") and cur_rounds >= MIN_STAGE_ROUNDS:
+            new_stage = 2
+        else:
+            new_stage = 1   # 그 외에는 1단계 유지 (eval 모델이 함부로 못 올림)
+    # 2→3: MIN_STAGE_ROUNDS 미충족 시 차단
+    elif new_stage > stage and cur_rounds < MIN_STAGE_ROUNDS:
         new_stage = stage
 
     # 1단계 사이클 동의 필요 여부 (eft_stage_router에서 선행 판단한 결과 활용)

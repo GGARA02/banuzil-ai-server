@@ -93,6 +93,8 @@ async def round_analyze(req: RoundAnalyzeRequest):
         m_message              = result.get("m_response", ""),
         needs_cycle_definition = result.get("needs_cycle_definition", False),
         risk_flag              = result.get("risk_flag", False),
+        eft_stage              = result.get("eft_stage", ctx["eft_stage"]),
+        stage_progress         = result.get("stage_progress", ctx["stage_progress"]),
     )
 
 
