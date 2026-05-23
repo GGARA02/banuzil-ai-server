@@ -47,7 +47,9 @@ AI 서버가 DB에서 세션 상태·히스토리를 직접 조회하므로, Spr
   "f_message": "무시받는다고 느끼셨군요. 그 마음이 정말 힘드셨겠어요...",
   "m_message": "바쁜 와중에도 연락이 중요하다는 걸 느끼시는 것 같아요...",
   "needs_cycle_definition": false,
-  "risk_flag": false
+  "risk_flag": false,
+  "eft_stage": 1,
+  "stage_progress": 0
 }
 ```
 
@@ -58,6 +60,11 @@ AI 서버가 DB에서 세션 상태·히스토리를 직접 조회하므로, Spr
 | `m_message` | string | 남성에게 보낼 AI 상담사 메시지 |
 | `needs_cycle_definition` | bool | `true`면 사이클 정의 절차 진행 필요 |
 | `risk_flag` | bool | `true`면 위험 신호 감지 (자해·자살·폭행 등) |
+| `eft_stage` | int | 현재 EFT 단계 (1/2/3). DB에도 저장됨 (참고·UI 표시용) |
+| `stage_progress` | int | 현재 단계 진행도 0~100. 3단계에서 90 도달 시 종료 권장 |
+
+> `eft_stage`·`stage_progress`는 AI 서버가 DB(`mediation_sessions`)에도 직접 갱신하므로,
+> Spring은 응답에서 받거나 DB에서 읽어도 동일하다. (응답 필드는 참고/표시용)
 
 ### Spring 처리 흐름
 
@@ -137,11 +144,16 @@ EFT 1단계에서 부정적 상호작용 사이클을 정의하는 절차.
 1. round-analyze 응답에서 needs_cycle_definition == true
 2. POST /ai/cycle (답변 없이) → 탐색 질문을 양측에 전달
 3. 양측 답변 수집
-4. POST /ai/cycle (답변 포함) → 사이클 정의 생성
+4. POST /ai/cycle (답변 포함) → 사이클 정의 생성 (AI 서버가 cycle_definition을 DB에 저장)
 5. 사이클 정의를 양측에 보여주고 동의 여부 확인
-6. 동의 시 → 2단계 진입 (AI 서버가 DB에서 자동 관리)
-7. 거부 시 → 상담 계속 (몇 라운드 후 재시도)
+6. → 다음 라운드의 round-analyze에서 AI 서버가 자동으로 2단계로 전환
+   (cycle_definition이 저장되어 있고 1단계 최소 라운드를 채우면 코드가 eft_stage=2로 올림)
 ```
+
+> **단계 전환은 전적으로 AI 서버가 관리한다.** Spring은 eft_stage를 직접 쓰지 않는다.
+> - 1→2: 사이클 정의 저장 후 다음 라운드에 AI가 자동 전환
+> - 2→3: 양측 정서 신호 누적(또는 누적 라운드 보조 게이트)으로 AI가 자동 전환
+> - 종료: AI가 3단계 progress를 점증시켜 90 도달 → Spring은 `eft_stage==3 && stage_progress>=90`일 때 `/ai/report` 호출 + 세션 완료 처리
 
 ---
 

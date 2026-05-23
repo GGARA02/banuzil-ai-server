@@ -1,5 +1,11 @@
 # 바느질 AI 서버 — API 명세서 v3.0 (Spring 연동용)
 
+> ⚠️ **이 문서는 구버전(v3 Stateless)입니다 — 현재 서버는 v4 DB-centric으로 동작합니다.**
+> v3은 Spring이 매 요청에 전체 컨텍스트를 보내고 `updated_*`를 돌려받는 Stateless 방식이었으나,
+> 현재는 **AI 서버가 Supabase에서 직접 상태를 읽고 씁니다(Spring은 session_id만 전달).**
+> 현재 계약은 [`API_SPEC_FOR_SPRING.md`](API_SPEC_FOR_SPRING.md)를 참조하세요.
+> (특히 "Spring이 eft_stage=2 저장" 같은 v3 서술은 더 이상 유효하지 않습니다 — 단계 전환은 AI 서버가 관리.)
+
 ## 기본 정보
 
 | 항목 | 값 |

@@ -23,7 +23,7 @@
 | 토큰 제한 | `MAX_OUTPUT_TOKENS(800)`, `BULLET_MAX_TOKENS(300)` 등 | 용도별 최대 토큰 |
 | ECR-R | `ANXIETY_CUTOFF(2.61)`, `AVOIDANCE_CUTOFF(2.33)` | 김성현(2004) 한국판 컷오프 |
 | 총알잡기 | `BULLET_THRESHOLD(0.6)` | 감지 민감도 (0~1) |
-| Self-Refine | `EVAL_WEIGHTS`, `EVAL_PASS_SCORE(4.0)`, `SAFETY_GATE_SCORE(3.0)` | 6개 척도 가중치 + 통과/안전 기준 |
+| Self-Refine | `EVAL_WEIGHTS`, `EVAL_PASS_SCORE(3.5)`, `SAFETY_GATE_SCORE(3.0)` | 6개 척도 가중치 + 통과/안전 기준 |
 | 중립 검사 | `NEUTRALITY_PASS_SCORE(3.0)`, `NEUTRALITY_WARN_SCORE(4.0)` | 중립성 통과/경고 기준 |
 | 위험 감지 | `RISK_DETECTION_THRESHOLD(0.85)`, `RISK_DETECTION_THRESHOLD_IPV(0.70)` | 키워드 기반 위험 감지 (총알잡기와 별개) |
 
@@ -44,27 +44,25 @@
 - `RISK_DETECTION_THRESHOLD` — 자해/자살/폭력 키워드 매칭 → 즉시 상담 중단
 - `BULLET_THRESHOLD` — GPT 기반 방어적/공격적 발화 감지 → 상담 전략 조정
 
-### 3. `schemas/request.py` + `schemas/response.py` — Spring ↔ Python 데이터 계약 (Stateless)
+### 3. `schemas/request.py` + `schemas/response.py` — Spring ↔ Python 데이터 계약 (v4 DB-centric)
 
-**Pydantic BaseModel** 기반. JSON 수신 시 타입 검증 + 범위 검사 자동 수행.
+**Pydantic BaseModel** 기반. v4에서는 Spring이 `session_id`만 보내고, AI 서버가 DB에서 직접 컨텍스트를 조회한다.
 
 주요 스키마:
 
 | 요청 | 응답 | 설명 |
 |---|---|---|
-| `RoundAnalyzeRequest` | `RoundAnalyzeResponse` | 라운드 분석 (프로필 + 히스토리 + 상태 전체 수신 → 결과 + updated_* 반환) |
-| `CycleRequest` | `CycleExploreResponse` / `CycleDefinitionResponse` | 사이클 탐색/정의 (동의는 Spring이 관리) |
-| `ReportRequest` | `ReportResponse` | 최종 보고서 (히스토리 + 프로필 직접 수신) |
+| `RoundAnalyzeRequest` (session_id, f/m_reply) | `RoundAnalyzeResponse` | 라운드 분석. AI가 DB 조회·갱신 후 메시지 반환 |
+| `CycleRequest` | `CycleExploreResponse` / `CycleDefinitionResponse` | 사이클 탐색/정의 |
+| `ReportRequest` (session_id) | `ReportResponse` | 최종 보고서 (AI가 DB에서 조회·INSERT) |
 
-`RoundAnalyzeResponse`의 핵심 필드:
-- `f_message`, `m_message` — Spring이 내담자에게 전달할 상담 메시지
-- `updated_*` 필드들 — Spring이 DB에 저장해야 할 갱신된 상태
-- `risk_flag` — True면 즉시 상담 중단
+`RoundAnalyzeResponse`의 필드:
+- `f_message`, `m_message` — 내담자에게 전달할 상담 메시지
 - `needs_cycle_definition` — True면 `/ai/cycle` 호출 필요
-- `eval_scores`, `neutrality_result`, `f_emotion`, `m_emotion` 등 — 디버깅/로깅용
+- `risk_flag` — True면 위험 신호 감지 (상담은 계속, Spring이 별도 처리)
+- `eft_stage`, `stage_progress` — 현재 단계·진행도 (AI가 DB에도 갱신, 응답은 참고/표시용)
 
-오버라이드 옵션 (`model_name`, `bullet_enabled`, `emotion_weight`):
-- 기본은 settings.py 값 사용, Spring이 특정 요청에만 다른 설정을 적용할 때 사용
+테스트 전용 옵셔널 필드(`bullet_enabled`, `max_refine`)는 Spring이 보내지 않으면 settings.py 기본값 사용.
 
 ---
 
@@ -229,21 +227,21 @@ LangChain이 `HumanMessage` / `AIMessage`로 변환하여 GPT에 전달.
 | 1단계 | patternAware | 자신의 반응 패턴 인식 |
 | 1단계 | otherSide | 상대 행동의 이면 언급 |
 | 1단계 | relationConcern | 관계 자체에 대한 걱정 |
-| 2단계 | vulnerability | 취약성 직접 표현 |
-| 2단계 | empathy | 상대에 대한 연민 |
-| 2단계 | recoveryWill | 관계 회복 의지 |
-| 2단계 | newComm | 새로운 소통 시도 |
+| 2단계 | vulnerability | 취약성 직접 표현 (Step 5) |
+| 2단계 | empathy | 상대에 대한 공감 반응 (Step 6) |
+| 2단계 | withdrawer_reengagement | 철회자 재관여 (Step 7) |
+| 2단계 | blamer_softening | 비난자 연화 (Step 7) |
 
 **SignalState**: 양측(f/m) 각 8개 신호의 bool 상태. `merge()`로 누적 — 한 번 True된 신호는 False로 돌아가지 않음.
 
-**`build_stage_instruction()`** — 신호 상태 기반 9스텝 자동 결정:
-- 1단계: 신호 0개→Step1, 1개→Step2, 2개→Step3, 3개+→Step4
+**`build_stage_instruction()`** — 신호 + 라운드 기반 스텝 자동 결정:
+- 1단계: 신호 기반 Step1~3 (라운드1만 Step1 고정, 이후 신호 따라 진전. Step4는 사이클 정의가 대체)
 - 2단계: 신호 0개→Step5, 1개→Step6, 2개+→Step7
-- 3단계: Step 8~9 고정
+- 3단계: `stage3_round`로 분화 — s3<3 → Step8(일상 적용 합의), s3≥3 → Step9(변화 서사 공고화)
 - 미확인 신호를 GPT에게 "이걸 이끌어내라"고 구체적으로 지시
 
-**`build_eval_prompt()`** — EFT 진행도 평가. GPT가 JSON으로 신호 판단 + stage 결정 + progress 반환.
-규칙: 1→2 전진은 코드가 직접 처리(사이클 동의 필요), 단계 후퇴 없음, 신호 누적 기준.
+**`build_eval_prompt()`** — EFT 진행도 평가. eval 모델이 JSON으로 신호 판단 + stage + progress 반환.
+규칙: 1→2 전진은 코드가 cycle_definition 기반으로 직접 처리(eval은 2로 못 올림), 2→3은 양측 2개 이상 신호, 단계 후퇴 없음, 신호 누적 기준. 신호 판정 기준을 구체화해 인색한 판정을 방지.
 
 **`build_bullet_detect_prompt()`** — 총알잡기 기본 프롬프트:
 - Reactive (1단계 방어): 비난/공격/분노
@@ -364,11 +362,12 @@ response_generator → neutrality_check ──실패──→ response_generator
 - build_system_prompt(): 32분류 + 개입 지침 + IPV 경고 + 총알잡기 컨텍스트 + 감성 분석 결과
 - build_user_message(): 단계 지시 + 상대방 발화 + Self-Refine 피드백 + 중립성 교정 피드백
 
-**stage_transition_check 규칙:**
+**stage_transition_check 규칙 (모두 코드 처리):**
 - 단계 후퇴 없음: `max(stage, new_stage)`
-- 1→2: 사이클 동의 절차가 필요하므로 여기서 차단
-- 2→3: 양측 모두 2단계 신호 2개 이상 + MIN_STAGE_ROUNDS 충족
-- needs_cycle_definition: 양측 1단계 신호 각 1개 이상이면 True
+- 1→2: `cycle_definition` 저장됨 + 1단계 누적 ≥ MIN_STAGE_ROUNDS → 코드가 자동 전환 (eval 모델은 2로 못 올림)
+- 2→3: 양측 2단계 신호 ≥2개 + MIN_STAGE_ROUNDS, **또는** 2단계 누적 4R + 양측 깊은 신호 합 ≥2 (정체 방지 보조 게이트)
+- 3단계 progress: 코드가 점증 (s3<3 → 40·58·75 / s3≥3 → 78·90·100) → 90 도달 시 종료
+- needs_cycle_definition(사이클 진입): 양측 1단계 신호 각 **2개 이상**이면 True
 
 **위험 키워드 (하드코딩):**
 - 자해: 자해, 손목, 긋
@@ -382,38 +381,40 @@ response_generator → neutrality_check ──실패──→ response_generator
 
 ## Stage 7 — 상담 라우터
 
-### 20. `routers/counseling.py` — Spring 연동 최종 접점 (v3 Stateless)
+### 20. `routers/counseling.py` — Spring 연동 최종 접점 (v4 DB-centric)
 
 | 엔드포인트 | 메서드 | 설명 |
 |---|---|---|
-| `/ai/round-analyze` | POST | 라운드 분석 (전체 컨텍스트 수신 → 분석 결과 + updated_* 반환) |
-| `/ai/cycle` | POST | 사이클 탐색/정의 (동의는 Spring이 DB에서 관리) |
-| `/ai/report` | POST | 최종 보고서 (히스토리 + 프로필 직접 수신) |
+| `/ai/round-analyze` | POST | 라운드 분석 (`session_id`만 수신 → AI가 DB 조회·갱신) |
+| `/ai/cycle` | POST | 사이클 탐색/정의 (정의 저장 + RAG 검색) |
+| `/ai/report` | POST | 최종 보고서 (DB에서 직접 조회·INSERT) |
 
 **`/ai/round-analyze` 핵심 흐름:**
-1. Spring이 보낸 ECR-R 점수로 `build_couple_profile()` → CoupleProfile 즉석 계산
-2. Spring이 보낸 signals dict → `_signals_from_dict()` → SignalState 복원
-3. `create_initial_state()` → LangGraph State 조립
-4. `graph.ainvoke(state)` → 7개 노드 순차 실행
-5. 히스토리에 현재 라운드 추가: `req.f_history + [user발화, AI응답]`
-6. `RoundAnalyzeResponse` 반환 (updated_* 필드 포함)
+1. `fetch_session_context(session_id)` — Supabase에서 세션·유저·애착·히스토리·rag_context 조회 → CoupleProfile 조립 (`services/session_service.py`)
+2. `create_initial_state()` → LangGraph State 조립
+3. `graph.ainvoke(state)` → 8개 노드 순차 실행
+4. `save_round_result()` — `mediation_records.ai_response` UPDATE + `mediation_sessions` EFT 상태 UPDATE
+5. `RoundAnalyzeResponse` 반환 (`f/m_message`, `needs_cycle_definition`, `risk_flag`, `eft_stage`, `stage_progress`)
+
+> 신호 직렬화 헬퍼(`_signals_from_dict`/`_signals_to_dict`)는 `session_service.py`에 있다.
 
 **`/ai/cycle` 2가지 분기:**
-1. cycle_definition 없음 → 탐색 질문 생성 (GPT), CycleExploreResponse
-2. cycle_definition 있음 → 사이클 정의 생성 (GPT), CycleDefinitionResponse
-- 동의 처리는 제거됨 — Spring이 DB에서 직접 관리
+1. 답변 없음 → 탐색 질문 생성 (GPT), CycleExploreResponse
+2. 답변 있음 → 사이클 정의 생성·저장 (GPT) → **RAG 검색**(동일 커플 과거 세션) → CycleDefinitionResponse
+- 별도 "동의" 단계는 없음 — 정의가 저장되면 다음 라운드에 AI가 자동으로 2단계 전환
 
-**Spring 관점 API 호출 순서:**
+**Spring 관점 API 호출 순서 (v4):**
 ```
-1. Spring이 세션 생성 (DB)
-2. POST /ai/round-analyze (반복)  → 1단계 상담
+1. Spring이 세션 생성 + 발화 INSERT (DB)
+2. POST /ai/round-analyze (session_id만)  → 1단계 상담
    ← needs_cycle_definition=True
-3. POST /ai/cycle                 → 탐색 질문 → 사이클 정의
-   Spring이 동의 수집 → DB에 eft_stage=2 저장
-4. POST /ai/round-analyze (반복)  → 2~3단계 상담
-5. Spring이 종료 동의 수집 (DB)
-6. POST /ai/report               → 보고서 수신
+3. POST /ai/cycle → 탐색 질문 → 사이클 정의 (AI가 cycle_definition 저장)
+4. POST /ai/round-analyze (반복)  → AI가 자동으로 2→3단계 진행
+5. eft_stage==3 && stage_progress>=90 → 종료 조건
+6. POST /ai/report → 보고서 생성·INSERT (AI가 직접) → 세션 완료
 ```
+
+> 단계 전환·라운드 증가·종료 진행도는 전부 AI 서버가 관리. Spring은 eft_stage를 쓰지 않고 읽기만 한다.
 
 ---
 

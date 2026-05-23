@@ -118,6 +118,8 @@ public class RoundAnalyzeResponse {
     private String mMessage;
     private boolean needsCycleDefinition;
     private boolean riskFlag;
+    private Integer eftStage;       // 현재 단계(1/2/3) — DB에도 갱신됨
+    private Integer stageProgress;  // 진행도 0~100 — 3단계 90 도달 시 종료
 }
 
 public class CycleExploreResponse {
@@ -294,7 +296,9 @@ Spring이 프론트엔드에 제공해야 하는 새 엔드포인트:
 | GET | `/api/sewings/{sessionId}/report` | 보고서 조회 (mediation_reports에서 SELECT) |
 | POST | `/api/sewings/{sessionId}/cycle/explore` | 사이클 탐색 질문 요청 |
 | POST | `/api/sewings/{sessionId}/cycle/define` | 사이클 정의 생성 (답변 전달) |
-| POST | `/api/sewings/{sessionId}/cycle/agree` | 사이클 동의 처리 |
+
+> ~~`/cycle/agree`~~ 별도 동의 엔드포인트는 **불필요**. 사이클 정의가 저장되면
+> 다음 라운드의 round-analyze에서 AI 서버가 자동으로 2단계로 전환한다(eft_stage를 Spring이 쓰지 않음).
 
 ---
 

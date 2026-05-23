@@ -22,7 +22,13 @@
 | **EFT 커플 상담 AI** | Emotionally Focused Therapy 기반. 커플의 애착 유형을 분석하고 3단계 상담을 진행. LangGraph 상태 그래프로 구현. |
 | **감성 분석 API** | 발화 텍스트의 감정을 분류. KoELECTRA 파인튜닝 모델(대분류 2개 + 소분류 3개) 사용. |
 
-**v3.0 Stateless 구조**: AI 서버는 상태를 보유하지 않는다. Spring이 세션 생명주기·히스토리·EFT 상태를 DB로 관리하고, 매 요청에 필요한 컨텍스트를 전달한다. AI 서버는 분석 결과 + 업데이트된 상태를 반환하는 순수 분석 엔진이다.
+**v4.0 DB-centric 구조** (현재): AI 서버가 **Supabase에서 직접** 세션 상태·히스토리·EFT 상태를 읽고 쓴다. Spring은 `session_id`만 전달하고, AI 서버가 `mediation_sessions`/`mediation_records`/`mediation_reports`를 직접 갱신한다. 단계 전환·라운드 증가·종료 진행도까지 모두 AI 서버가 관리한다.
+
+> (구버전 v3.0 Stateless: Spring이 매 요청에 전체 컨텍스트를 보내고 `updated_*`를 받던 방식 — 현재는 사용하지 않음. 이 문서 일부 옛 서술이 남아 있을 수 있음.)
+
+**최근 추가 기능**:
+- **RAG**: 동일 커플 과거 세션의 사이클을 임베딩(`session_embeddings`)해, 현재 사이클과 유사하면 그 보고서를 2단계 이후 프롬프트에 주입.
+- **Mock 테스트 모드**: `services/mock_db.py` + 프록시(`supabase_client`)로 실 DB 없이 테스트.
 
 ---
 
@@ -55,9 +61,16 @@ banuzil-ai-server/
 │   ├── __init__.py
 │   ├── llm.py                       # LLM 호출 공유 인터페이스
 │   ├── emotion_service.py           # KoELECTRA 감성 분석 싱글턴 서비스
-│   ├── session_store.py             # 인메모리 세션 저장소 (v3에서 미사용, 참고용)
-│   ├── report_service.py            # 최종 보고서 생성
-│   └── attachment_service.py        # ECR-R → 커플 프로파일 빌더 (32분류)
+│   ├── supabase_client.py           # Supabase REST 클라이언트(프록시 — mock 교체 가능)
+│   ├── session_service.py           # DB 조회/저장 (세션 컨텍스트, 라운드 결과, 보고서)
+│   ├── mock_db.py                   # 인메모리 Mock Supabase (테스트 클라이언트용)
+│   ├── session_store.py             # (구 v2 인메모리 저장소 — 미사용, 데드코드)
+│   ├── report_service.py            # 최종 보고서 생성 (+3단계 JSON 파싱)
+│   ├── attachment_service.py        # ECR-R → 커플 프로파일 빌더 (32분류)
+│   └── rag/                         # RAG: 동일 커플 과거 사이클 검색
+│       ├── embedding_service.py     # 사이클 임베딩 + 보고서 저장
+│       ├── retrieval_service.py     # 유사 세션 검색(최고 1건)
+│       └── rag_prompt_builder.py    # 검색 결과 → 프롬프트 텍스트
 │
 ├── graphs/
 │   ├── __init__.py
@@ -116,13 +129,14 @@ banuzil-ai-server/
 
 EFT(정서중심치료)는 커플 갈등을 3단계로 진행한다.
 
-| 단계 | 목표 | 진입 조건 | 종료 조건 |
-|------|------|-----------|-----------|
-| **1단계** | 부정적 상호작용 사이클 탐색 | 세션 시작 | 양측 사이클 동의 (Spring DB 관리) |
-| **2단계** | 1차 정서 접근 + 애착 욕구 표현 | 사이클 동의 완료 | 신호 기반 자동 전환 |
-| **3단계** | 새로운 상호작용 패턴 통합 | 신호 누적 충족 | 양측 종료 동의 (Spring DB 관리) |
+| 단계 | 목표 | 진입(전환) 조건 — **모두 AI 서버가 코드로 처리** |
+|------|------|-----------|
+| **1단계** De-escalation | 부정적 상호작용 사이클 탐색 | 세션 시작 |
+| **2단계** Restructuring | 1차 정서 접근 + 애착 욕구 표현 | `cycle_definition` 저장됨 + 1단계 누적 ≥ `MIN_STAGE_ROUNDS` → AI가 자동 전환 |
+| **3단계** Consolidation | 새 상호작용 패턴 통합 (Step 8 합의 → Step 9 공고화) | 양측 2단계 신호 ≥2개(또는 누적 라운드 보조 게이트) → AI 자동 전환 |
+| **종료** | — | 3단계 progress가 코드로 점증해 90 도달 → Spring이 `eft_stage==3 && progress>=90`에서 `/ai/report` + 완료 |
 
-단계는 **후퇴하지 않는다** (1→2→3 단방향).
+단계는 **후퇴하지 않는다** (1→2→3 단방향). 3단계는 누적 라운드로 Step 8(일상 적용 합의) → Step 9(변화 서사 공고화)로 분화된다.
 
 ### 4-2. 애착 유형 분류 (ECR-R 기반)
 
@@ -147,11 +161,13 @@ ECR-R 설문으로 불안(anxiety)과 회피(avoidance) 점수(1.0~7.0)를 얻�
 
 ```python
 class SignalState:
-    f: dict  # 여성 신호 {"emotional_awareness": bool, "vulnerability_expressed": bool, ...}
+    # 1단계 신호: emotion, patternAware, otherSide, relationConcern
+    # 2단계 신호: vulnerability, empathy, withdrawer_reengagement, blamer_softening
+    f: dict  # 여성 신호 {신호명: bool}
     m: dict  # 남성 신호
 ```
 
-`stage_transition_check` 노드에서 LLM이 신호를 평가하고 `signals.merge()`로 누적한다.
+`stage_transition_check` 노드에서 eval 모델(gpt-4o-mini)이 신호를 평가하고 `signals.merge()`로 누적한다. 사이클 진입은 양측 1단계 신호가 각 2개 이상일 때, 2→3 전환은 양측 2단계 신호가 각 2개 이상일 때(또는 코드 보조 게이트)다.
 
 ### 4-4. 총알잡기 (Bullet Detection)
 
@@ -475,22 +491,24 @@ KoELECTRA 파인튜닝 스크립트. **서버 실행과 무관** — 모델 학�
 
 ---
 
-## 8. Spring DB 저장 구조
+## 8. DB 구조 (v4 DB-centric)
 
-v3에서 세션 상태는 Spring DB에 저장된다. AI 서버는 매 요청에서 아래 필드를 수신하고, 응답의 `updated_*` 필드로 갱신된 값을 반환한다.
+v4에서는 **AI 서버가 Supabase를 직접 읽고 쓴다.** Spring은 `session_id`만 전달하고, 발화 INSERT만 한다. AI 서버가 관리하는 `mediation_sessions` 컬럼:
 
-| 필드 | 타입 | Spring DB 저장 | 설명 |
-|------|------|---------------|------|
-| `f_history` | `list[dict]` | JSONB (user1_message) | 여성 대화 히스토리 `[{"role": "user"\|"assistant", "content": str}]` |
-| `m_history` | `list[dict]` | JSONB (user2_message) | 남성 대화 히스토리 |
-| `eft_stage` | `int` | INTEGER | 현재 EFT 단계 (1/2/3) |
-| `stage_rounds` | `dict[int,int]` | JSONB | 단계별 누적 라운드 수 `{1: n, 2: n, 3: n}` |
-| `stage_progress` | `int` | INTEGER | 현재 단계 진행도 (0~100) |
-| `signals` | `dict` | JSONB | EFT 진행 신호 `{"f": {...}, "m": {...}}` |
-| `cycle_definition` | `str` | TEXT | 부정적 상호작용 사이클 정의 텍스트 |
-| `cycle_agreed` | — | BOOLEAN x2 | Spring이 직접 관리 |
-| `end_agreed` | — | BOOLEAN x2 | Spring이 직접 관리 |
-| `round_num` | `int` | INTEGER | 누적 라운드 번호 |
+| 컬럼 | 타입 | 설명 |
+|------|------|------|
+| `eft_stage` | int | 현재 EFT 단계 (1/2/3) — AI가 단방향 갱신 |
+| `stage_rounds` | jsonb | 단계별 누적 라운드 `{"1":n,"2":n,"3":n}` (문자열 키) |
+| `stage_progress` | int | 진행도 0~100 (3단계는 코드 점증) |
+| `detected_signals` | jsonb | EFT 신호 `{"f":{...},"m":{...}}` |
+| `cycle_definition` | text | 사이클 정의 (1→2 전환 트리거) |
+| `cycle_skip_until` | int | 사이클 재시도 기준 라운드 |
+| `rag_context` | text | RAG 검색 결과(과거 보고서) — 2단계 이후 프롬프트 주입 |
+| `current_round` | int | 라운드 번호 (AI가 +1) |
+
+히스토리는 `mediation_records`(발화 content + ai_response)에서 재조립하며, 보고서는 `mediation_reports`에 INSERT된다. 자세한 스키마는 [`DB_SCHEMA.md`](DB_SCHEMA.md) 참조.
+
+> `cycle_agreed`/`end_agreed`는 v3 설계 잔재로, 현재 시스템(Spring·AI)엔 구현되어 있지 않다. 단계 전환은 AI 서버가 `cycle_definition`/신호 기반으로 자동 처리한다.
 
 ---
 

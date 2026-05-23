@@ -156,5 +156,19 @@ await supa.update("mediation_sessions", {"session_id": "eq.xxx"}, {"eft_stage": 
 | `users` | 사용자 정보 (mbti, gender, anxiety 등) |
 | `mediation_sessions` | 상담 세션 상태 |
 | `mediation_records` | 라운드별 대화 기록 |
+| `mediation_reports` | 최종 보고서 (4섹션 × 2명) |
 | `friendships` | 커플 연결 정보 |
 | `user_attachments` | 애착 유형 점수 |
+| `session_embeddings` | RAG용 사이클 임베딩 (pgvector) |
+
+### RAG 기능 사용 시 (선택)
+
+동일 커플 과거 세션 참조(RAG)를 쓰려면 Supabase SQL Editor에서 `scripts/rag_migration.sql`을
+1회 실행해야 한다 (pgvector 확장 + `session_embeddings` 테이블 + `rag_context` 컬럼 + 검색 RPC).
+`.env`에서 `RAG_ENABLED=false`로 끄면 마이그레이션 없이도 기존 상담은 정상 동작한다.
+
+```
+RAG_ENABLED=true                  ← RAG 기능 ON/OFF (기본 true)
+RAG_SIMILARITY_THRESHOLD=0.55     ← 유사도 채택 기준 (한국어 임베딩 실측 튜닝값)
+EMBEDDING_MODEL=text-embedding-3-small
+```

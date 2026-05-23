@@ -13,9 +13,15 @@
 | `mediation_sessions` | ALTER — 6개 컬럼 추가 | EFT 상담 상태를 AI 서버가 직접 관리 |
 | `mediation_records` | ALTER — 1개 컬럼 추가 | AI 응답을 사용자 발화와 같은 row에 저장 |
 | `mediation_reports` | CREATE — 신규 테이블 | 최종 보고서 4개 섹션 분리 저장 |
+| `mediation_sessions` | ALTER — `rag_context` 추가 (2차) | RAG 검색 결과(과거 유사 세션 보고서) 캐시 |
+| `session_embeddings` | CREATE — 신규 테이블 (2차) | RAG용 동일 커플 사이클 임베딩 (pgvector) |
 | `users` | 변경 없음 | |
 | `user_attachments` | 변경 없음 | |
 | `friendships` | 변경 없음 | |
+
+> 1차(2026-05-17): EFT 상태 컬럼 + ai_response + mediation_reports.
+> 2차(2026-05-23): RAG 기능 — `session_embeddings` 테이블 + `rag_context` 컬럼.
+> RAG 마이그레이션 SQL은 `scripts/rag_migration.sql`, 롤백은 `scripts/rag_rollback.sql` 참조.
 
 ---
 
@@ -137,15 +143,57 @@ CREATE TABLE mediation_reports (
 
 ---
 
+## 4. (2차) RAG — session_embeddings 테이블 + rag_context 컬럼
+
+동일 커플의 과거 세션 중 현재 사이클과 유사한 세션을 찾아, 그 보고서를 2단계 이후
+상담 프롬프트에 참고로 주입하는 기능. pgvector 확장 필요.
+
+### SQL (전문: `scripts/rag_migration.sql`)
+
+```sql
+CREATE EXTENSION IF NOT EXISTS vector;
+
+ALTER TABLE mediation_sessions
+  ADD COLUMN IF NOT EXISTS rag_context text DEFAULT '';   -- 검색된 과거 보고서 캐시
+
+CREATE TABLE IF NOT EXISTS session_embeddings (
+  id              serial        PRIMARY KEY,
+  session_id      int           NOT NULL UNIQUE
+                                REFERENCES mediation_sessions(session_id) ON DELETE CASCADE,
+  couple_key      varchar       NOT NULL,        -- min(id)_max(id)
+  eft_final_stage smallint      DEFAULT 3,
+  cycle_text      text          NOT NULL,        -- 사이클 정의 원문(임베딩 대상)
+  summary_text    text          NOT NULL,        -- 보고서 전문(주입용)
+  embedding       vector(1536)  NOT NULL,        -- 사이클 정의 임베딩
+  created_at      timestamptz   DEFAULT now()
+);
+-- + 인덱스(couple_key, ivfflat) + match_best_couple_session RPC 함수
+```
+
+### Spring 참고사항
+
+- **AI 서버 전용 테이블/컬럼** — Spring은 읽지도 쓰지도 않음.
+- `session_embeddings`는 `mediation_sessions` 삭제 시 `ON DELETE CASCADE`로 자동 정리.
+
+---
+
 ## 변경 후 전체 스키마
 
 ### mediation_sessions
 
 ```
 session_id(PK), initiator_id(FK), participant_id(FK), current_round, status,
-eft_stage, stage_rounds, stage_progress, detected_signals,     ← 신규
-cycle_definition, cycle_skip_until,                            ← 신규
+eft_stage, stage_rounds, stage_progress, detected_signals,     ← 1차 신규
+cycle_definition, cycle_skip_until,                            ← 1차 신규
+rag_context,                                                   ← 2차 신규(RAG)
 created_at, updated_at
+```
+
+### session_embeddings (2차 신규, RAG)
+
+```
+id(PK), session_id(FK, UNIQUE, ON DELETE CASCADE), couple_key,
+eft_final_stage, cycle_text, summary_text, embedding(vector 1536), created_at
 ```
 
 ### mediation_records
