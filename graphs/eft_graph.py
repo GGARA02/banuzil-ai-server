@@ -47,6 +47,10 @@ from config.prompts.stage_prompts import (
 # (eval 모델이 신호를 보수적으로 잡아 2단계에 무한 정체하는 것을 방지)
 STAGE2_FORCE_ROUNDS = 4
 
+# 1단계가 이 라운드 수 이상 누적되면 신호가 미달이어도 사이클 절차로 진입
+# (철회형 파트너가 신호를 잘 안 드러내 1단계에 질질 끌리는 것을 방지)
+CYCLE_FORCE_ROUNDS = 4
+
 
 # ── 위험 키워드 하드코딩 ──────────────────────────────────
 # risk_gate는 LLM 없이 순수 키워드 매칭 (반드시 하드코딩)
@@ -294,10 +298,15 @@ def node_eft_stage_router(state: EFTState) -> EFTState:
         if round_num >= cycle_skip_until:
             signals = state.get("signals") or SignalState()
             keys1 = STAGE1_SIGNALS
-            # 1단계가 2라운드 만에 끝나지 않도록, 양측 모두 신호 2개 이상일 때 사이클 진입
             f_cnt = sum(1 for k in keys1 if signals.f.get(k))
             m_cnt = sum(1 for k in keys1 if signals.m.get(k))
+            cur1  = stage_rounds.get("1", 0)
+            # 정상 경로: 양측 모두 1단계 신호 2개 이상이면 사이클 진입
             if f_cnt >= 2 and m_cnt >= 2:
+                is_cycle_round = True
+            # 안전 게이트: 1단계가 너무 길어지면(CYCLE_FORCE_ROUNDS+) 신호 미달이어도 진입
+            # (철회형 파트너가 신호를 안 드러내 1단계에 무한 정체하는 것 방지)
+            elif cur1 >= CYCLE_FORCE_ROUNDS:
                 is_cycle_round = True
 
     return {
