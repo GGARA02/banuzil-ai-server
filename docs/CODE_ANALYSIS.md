@@ -367,7 +367,7 @@ response_generator → neutrality_check ──실패──→ response_generator
 - 1→2: `cycle_definition` 저장됨 + 1단계 누적 ≥ MIN_STAGE_ROUNDS → 코드가 자동 전환 (eval 모델은 2로 못 올림)
 - 2→3: 양측 2단계 신호 ≥2개 + MIN_STAGE_ROUNDS, **또는** 2단계 누적 4R + 양측 깊은 신호 합 ≥2 (정체 방지 보조 게이트)
 - 3단계 progress: 코드가 점증 (s3<3 → 40·58·75 / s3≥3 → 78·90·100) → 90 도달 시 종료
-- needs_cycle_definition(사이클 진입): 양측 1단계 신호 각 **2개 이상**이면 True
+- needs_cycle_definition(사이클 진입): 양측 1단계 신호 각 **2개 이상**, **또는** 1단계 누적 4R 이상(`CYCLE_FORCE_ROUNDS`, 신호 미달이어도 강제 진입 — 철회형 정체 방지)
 
 **위험 키워드 (하드코딩):**
 - 자해: 자해, 손목, 긋

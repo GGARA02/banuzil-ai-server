@@ -132,6 +132,7 @@ EFT(정서중심치료)는 커플 갈등을 3단계로 진행한다.
 | 단계 | 목표 | 진입(전환) 조건 — **모두 AI 서버가 코드로 처리** |
 |------|------|-----------|
 | **1단계** De-escalation | 부정적 상호작용 사이클 탐색 | 세션 시작 |
+| **(사이클 절차)** | 부정적 상호작용 사이클 정의 | 양측 1단계 신호 각 2개 이상, **또는** 1단계 4R 이상(`CYCLE_FORCE_ROUNDS`, 정체 방지 강제) |
 | **2단계** Restructuring | 1차 정서 접근 + 애착 욕구 표현 | `cycle_definition` 저장됨 + 1단계 누적 ≥ `MIN_STAGE_ROUNDS` → AI가 자동 전환 |
 | **3단계** Consolidation | 새 상호작용 패턴 통합 (Step 8 합의 → Step 9 공고화) | 양측 2단계 신호 ≥2개(또는 누적 라운드 보조 게이트) → AI 자동 전환 |
 | **종료** | — | 3단계 progress가 코드로 점증해 90 도달 → Spring이 `eft_stage==3 && progress>=90`에서 `/ai/report` + 완료 |
@@ -167,7 +168,7 @@ class SignalState:
     m: dict  # 남성 신호
 ```
 
-`stage_transition_check` 노드에서 eval 모델(gpt-4o-mini)이 신호를 평가하고 `signals.merge()`로 누적한다. 사이클 진입은 양측 1단계 신호가 각 2개 이상일 때, 2→3 전환은 양측 2단계 신호가 각 2개 이상일 때(또는 코드 보조 게이트)다.
+`stage_transition_check` 노드에서 eval 모델(gpt-4o-mini)이 신호를 평가하고 `signals.merge()`로 누적한다. 사이클 진입은 양측 1단계 신호가 각 2개 이상일 때(또는 1단계 4R 이상 강제), 2→3 전환은 양측 2단계 신호가 각 2개 이상일 때(또는 2단계 4R 보조 게이트)다.
 
 ### 4-4. 총알잡기 (Bullet Detection)
 
