@@ -134,9 +134,42 @@ EFT 1단계에서 부정적 상호작용 사이클을 정의하는 절차.
 ```json
 {
   "session_id": 1,
-  "cycle_definition": "여성이 불안해서 확인을 추구하면 → 남성이 압도되어 철수 → 여성이 더 불안해지는 악순환"
+  "cycle_definition": "여성이 불안해서 확인을 추구하면 → 남성이 압도되어 철수 → 여성이 더 불안해지는 악순환",
+  "f_message": "여성 내담자에게 전달할 상담사 브릿지 메시지 (사이클을 비춰주고 2단계로 초대)",
+  "m_message": "남성 내담자에게 전달할 상담사 브릿지 메시지"
 }
 ```
+
+| 필드 | 타입 | 설명 |
+|------|------|------|
+| `cycle_definition` | string | 사이클 정의 본문 (AI 서버가 `mediation_sessions.cycle_definition`에 저장) |
+| `f_message` | string | 사이클 정의 직후 여성에게 줄 상담사 메시지. 빈 문자열일 수 있음(생성 실패 시) |
+| `m_message` | string | 남성에게 줄 상담사 메시지 |
+
+> **`f_message`/`m_message`는 사이클 정의 직후의 상담사 응답이다.** 정의문만 보여주면 사용자가
+> 무엇에 응답할지 알 수 없으므로, AI가 사이클을 따뜻하게 비춰주고 2단계(더 깊은 마음 표현)로
+> 잇는 메시지를 함께 반환한다.
+
+#### Spring이 해야 할 일 (브릿지 메시지 영속화)
+
+`f_message`/`m_message`는 **유저 발화 없이 AI가 단독으로 낸 메시지**다. 다음 라운드 히스토리에
+이어지도록 하려면 Spring이 `mediation_records`에 INSERT한다 (기존 계약: Spring INSERT → AI가
+ai_response 채움. 단, 여기서는 ai_response까지 Spring이 채워 넣음):
+
+```
+INSERT mediation_records (session_id, user_id=f_user_id, content=NULL/'',
+                          ai_response = f_message, round_number = 직전 완료 라운드)
+INSERT mediation_records (session_id, user_id=m_user_id, content=NULL/'',
+                          ai_response = m_message, round_number = 직전 완료 라운드)
+```
+
+- **`round_number`는 직전 완료 라운드**(= 현재 `current_round` − 1)로 넣는다.
+  다음 라운드 round-analyze의 ai_response UPDATE 필터(`round_number = 다음 라운드`)와 충돌하지 않게.
+- **`content`는 빈값/NULL.** 대화창을 `mediation_records` 재조회로 그릴 경우,
+  **content가 빈 행은 유저 말풍선을 그리지 말고 ai_response만 AI 말풍선으로 렌더**한다.
+- AI 서버의 히스토리 재조립은 `content` 있을 때만 user턴, `ai_response` 있을 때만 assistant턴을
+  추가하므로, 이 INSERT만으로 브릿지가 다음 라운드 프롬프트 히스토리에 자연 포함된다.
+- 영속화를 생략하면(표시만 하면) UX엔 문제없지만 다음 라운드 AI가 이 메시지를 기억하지 못한다.
 
 ### Spring 처리 흐름
 
@@ -144,8 +177,10 @@ EFT 1단계에서 부정적 상호작용 사이클을 정의하는 절차.
 1. round-analyze 응답에서 needs_cycle_definition == true
 2. POST /ai/cycle (답변 없이) → 탐색 질문을 양측에 전달
 3. 양측 답변 수집
-4. POST /ai/cycle (답변 포함) → 사이클 정의 생성 (AI 서버가 cycle_definition을 DB에 저장)
-5. 사이클 정의를 양측에 보여주고 동의 여부 확인
+4. POST /ai/cycle (답변 포함) → 사이클 정의 + 브릿지 메시지(f_message/m_message) 생성
+   (AI 서버가 cycle_definition을 DB에 저장)
+5. cycle_definition과 f_message/m_message를 양측에 보여줌
+   + f_message/m_message를 mediation_records에 INSERT (위 "브릿지 메시지 영속화" 참고)
 6. → 다음 라운드의 round-analyze에서 AI 서버가 자동으로 2단계로 전환
    (cycle_definition이 저장되어 있고 1단계 최소 라운드를 채우면 코드가 eft_stage=2로 올림)
 ```

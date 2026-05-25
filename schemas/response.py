@@ -30,6 +30,10 @@ class CycleDefinitionResponse(BaseModel):
     """사이클 정의 결과"""
     session_id: int
     cycle_definition: str
+    # 사이클 정의 직후 상담사가 내담자에게 전달할 브릿지 메시지 (2단계로 연결)
+    # 스프링은 이 값을 mediation_records.ai_response로 INSERT (content 빈값, 직전 완료 라운드)
+    f_message: str = ""
+    m_message: str = ""
 
 
 class ReportSections(BaseModel):

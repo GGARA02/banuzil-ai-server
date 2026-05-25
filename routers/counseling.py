@@ -26,11 +26,12 @@ from services.session_service import (
 )
 from services.report_service import generate_report
 from graphs.eft_graph import get_eft_graph, create_initial_state
-from services.llm import call_llm
+from services.llm import call_llm, call_llm_with_history
 from config.prompts.eft_base import (
     build_cycle_explore_prompt, build_cycle_definition_prompt,
+    build_system_prompt, build_cycle_bridge_message_prompt,
 )
-from config.settings import EVAL_MODEL_NAME, RAG_ENABLED
+from config.settings import EVAL_MODEL_NAME, MODEL_NAME, RAG_ENABLED
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/ai", tags=["ai"])
@@ -172,9 +173,35 @@ async def cycle_analyze(req: CycleRequest):
             except Exception as e:
                 logger.warning(f"[{req.session_id}] RAG 검색 실패 (무시): {e}")
 
+        # 사이클 정의 직후 상담사 브릿지 메시지 생성 (2단계로 연결).
+        # 실제 상담 발화이므로 MODEL_NAME 사용. 생성 실패해도 정의 응답 자체는 보장.
+        f_message, m_message = "", ""
+        try:
+            cp    = ctx["couple_profile"]
+            f_sys = build_system_prompt(
+                is_female=True, couple_profile=cp,
+                eft_stage=ctx["eft_stage"], stage_progress=ctx["stage_progress"],
+            )
+            m_sys = build_system_prompt(
+                is_female=False, couple_profile=cp,
+                eft_stage=ctx["eft_stage"], stage_progress=ctx["stage_progress"],
+            )
+            f_message, m_message = await asyncio.gather(
+                call_llm_with_history(f_sys, ctx["f_history"],
+                    build_cycle_bridge_message_prompt(True, definition), model=MODEL_NAME),
+                call_llm_with_history(m_sys, ctx["m_history"],
+                    build_cycle_bridge_message_prompt(False, definition), model=MODEL_NAME),
+            )
+            f_message = (f_message or "").strip()
+            m_message = (m_message or "").strip()
+        except Exception as e:
+            logger.warning(f"[{req.session_id}] 브릿지 메시지 생성 실패 (무시): {e}")
+
         return CycleDefinitionResponse(
             session_id       = req.session_id,
             cycle_definition = definition,
+            f_message        = f_message,
+            m_message        = m_message,
         )
 
 

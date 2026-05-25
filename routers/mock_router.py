@@ -62,21 +62,46 @@ async def mock_add_record(
     session_id: int,
     user_id: int,
     round_number: int,
-    content: str,
+    content: str = "",
+    ai_response: str | None = None,
 ):
     """
     Mock DB에 발화 레코드를 추가한다.
     Spring이 INSERT하는 것을 시뮬레이션.
+    - 일반 발화: content만 전달 (ai_response는 AI 서버가 나중에 UPDATE)
+    - 사이클 브릿지: content 빈값 + ai_response 전달 (AI 단독 메시지 영속화)
     """
     await mock_supa.insert("mediation_records", {
         "session_id": session_id,
         "user_id": user_id,
         "round_number": round_number,
         "content": content,
-        "ai_response": None,
+        "ai_response": ai_response,
     })
 
     return {"status": "ok", "message": f"레코드 추가: user={user_id}, round={round_number}"}
+
+
+@router.get("/get-session")
+async def mock_get_session(session_id: int):
+    """
+    Mock DB의 세션 상태를 조회한다 (테스트 클라이언트 시각화용).
+    EFT 신호(detected_signals)·단계·진행도 등 AI 서버가 관리하는 상태를 반환.
+    프로덕션 /ai/round-analyze 응답 계약은 건드리지 않기 위한 테스트 전용 경로.
+    """
+    rows = await mock_supa.get("mediation_sessions", {"session_id": f"eq.{session_id}"})
+    if not rows:
+        return {"status": "not_found", "session_id": session_id}
+    s = rows[0]
+    return {
+        "status":           "ok",
+        "session_id":       session_id,
+        "eft_stage":        s.get("eft_stage"),
+        "stage_rounds":     s.get("stage_rounds"),
+        "stage_progress":   s.get("stage_progress"),
+        "detected_signals": s.get("detected_signals") or {"f": {}, "m": {}},
+        "cycle_definition": s.get("cycle_definition", ""),
+    }
 
 
 @router.post("/restore-supabase")

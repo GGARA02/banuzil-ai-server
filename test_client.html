@@ -273,6 +273,10 @@
         <div style="font-size:11px;font-weight:500;">위험 신호 없음</div>
         <div style="font-size:10px;margin-top:3px;">위험 감지 시 여기에 표시됩니다.</div>
       </div>
+      <div id="signalPanel" style="margin-top:12px;display:none;">
+        <div class="info-title">EFT 신호 (Mock 모드)</div>
+        <div id="signalGrid" style="font-size:11px;line-height:1.6;"></div>
+      </div>
       <div id="lastCycleDef" style="margin-top:12px;display:none;">
         <div class="info-title">사이클 정의</div>
         <div id="lastCycleDefText" style="font-size:11px;line-height:1.7;white-space:pre-wrap;background:var(--surface2);padding:8px;border:1px solid var(--border);border-radius:var(--radius);"></div>
@@ -356,6 +360,51 @@ function updatePills() {
   document.getElementById('pillProgress').textContent = `진행도 ${STATE.stageProgress}%`;
 }
 
+// ── EFT 신호 시각화 (Mock 모드) ──────────────────────────────
+// 1단계 4신호 + 2단계 4신호. 한 번 켜지면 꺼지지 않는 누적 상태.
+const SIGNAL_DEFS = [
+  ['emotion',                 '감정어휘',  1],
+  ['patternAware',            '패턴인식',  1],
+  ['otherSide',               '상대이면',  1],
+  ['relationConcern',         '관계걱정',  1],
+  ['vulnerability',           '취약성',    2],
+  ['empathy',                 '공감',      2],
+  ['withdrawer_reengagement', '재관여',    2],
+  ['blamer_softening',        '연화',      2],
+];
+
+function _signalChips(sig) {
+  sig = sig || {};
+  let on = 0;
+  const chips = SIGNAL_DEFS.map(([key, label, stage]) => {
+    const active = sig[key] === true;
+    if (active) on++;
+    const bg = active ? (stage === 1 ? '#2563eb' : '#7c3aed') : 'var(--surface2)';
+    const fg = active ? '#fff' : 'var(--text-muted, #888)';
+    const op = active ? '1' : '0.55';
+    return `<span style="display:inline-block;margin:2px;padding:2px 6px;border-radius:10px;font-size:10px;background:${bg};color:${fg};opacity:${op};border:1px solid var(--border);">${label}</span>`;
+  }).join('');
+  return { chips, on };
+}
+
+function renderSignals(detected) {
+  const f = _signalChips((detected && detected.f) || {});
+  const m = _signalChips((detected && detected.m) || {});
+  document.getElementById('signalPanel').style.display = 'block';
+  document.getElementById('signalGrid').innerHTML =
+    `<div style="margin-bottom:6px;"><b style="color:var(--female);">여성 ${f.on}/8</b><div>${f.chips}</div></div>` +
+    `<div><b style="color:var(--male);">남성 ${m.on}/8</b><div>${m.chips}</div></div>`;
+}
+
+// Mock 모드에서 세션 상태를 조회해 신호 그리드 갱신
+async function refreshSignals() {
+  if (!STATE.mockMode || !STATE.sessionId) return;
+  try {
+    const s = await api('GET', '/ai/mock/get-session?session_id=' + STATE.sessionId, null);
+    if (s && s.status === 'ok') renderSignals(s.detected_signals);
+  } catch (e) { /* 시각화 실패는 무시 */ }
+}
+
 // ================================================================
 // 세션 초기화
 // ================================================================
@@ -436,6 +485,8 @@ async function resetSession() {
   document.getElementById('sessionInfo').classList.add('hidden');
   document.getElementById('riskBadge').classList.add('hidden');
   updateRiskArea(false);
+  document.getElementById('signalPanel').style.display = 'none';
+  document.getElementById('signalGrid').innerHTML = '';
   addSys('세션 초기화됨');
   updatePills();
   updateStateDebug();
@@ -522,6 +573,7 @@ async function sendRound() {
     if (typeof data.stage_progress === 'number') STATE.stageProgress = data.stage_progress;
     updatePills();
     updateStateDebug();
+    await refreshSignals();   // EFT 신호 그리드 갱신 (Mock 모드)
 
     if (data.risk_flag) {
       addSys('위험 신호 감지 — 상담 계속 진행, Spring에 전달됨');
@@ -594,6 +646,26 @@ async function showCycleExplore() {
   } catch (e) {}
 }
 
+// 사이클 정의 직후 상담사 브릿지 메시지: 채팅 표시 + (mock 모드) 스프링 역할로 records INSERT
+// content 빈값 + ai_response=브릿지, round_number=직전 완료 라운드(STATE.roundNum) → 다음 라운드 히스토리에 연속 포함
+async function applyCycleBridge(data) {
+  const fMsg = (data && data.f_message) || '';
+  const mMsg = (data && data.m_message) || '';
+  if (fMsg) addMsg('f', 'ai', 'AI 상담사 (사이클 정리)', fMsg);
+  if (mMsg) addMsg('m', 'ai', 'AI 상담사 (사이클 정리)', mMsg);
+  if (STATE.mockMode && (fMsg || mMsg)) {
+    const rn = STATE.roundNum;  // 직전 완료 라운드
+    try {
+      if (fMsg) await api('POST', '/ai/mock/add-record?session_id=' + STATE.sessionId +
+        '&user_id=' + STATE.fUserId + '&round_number=' + rn +
+        '&content=&ai_response=' + encodeURIComponent(fMsg), null);
+      if (mMsg) await api('POST', '/ai/mock/add-record?session_id=' + STATE.sessionId +
+        '&user_id=' + STATE.mUserId + '&round_number=' + rn +
+        '&content=&ai_response=' + encodeURIComponent(mMsg), null);
+    } catch (e) { log('err', '브릿지 기록 실패: ' + e.message); }
+  }
+}
+
 async function generateCycleDef() {
   const fAnswer = (document.getElementById('fExploreAnswer')?.value || '').trim();
   const mAnswer = (document.getElementById('mExploreAnswer')?.value || '').trim();
@@ -613,6 +685,13 @@ async function generateCycleDef() {
     // 우측 패널에 사이클 정의 표시
     document.getElementById('lastCycleDef').style.display = 'block';
     document.getElementById('lastCycleDefText').textContent = cycleDef;
+
+    // 사이클 정의문을 채팅·요청 로그에 남김
+    addSys('[사이클 정의] ' + cycleDef);
+    log('inf', '사이클 정의: ' + cycleDef);
+
+    // 사이클 직후 상담사 브릿지 메시지 표시 + (mock) records INSERT
+    await applyCycleBridge(data);
 
     addSys('사이클 정의 완료 — 다음 라운드부터 AI가 2단계로 자동 전환합니다 (실제 eft_stage는 상단 단계 칩에서 확인)');
     updateStateDebug();
@@ -941,9 +1020,14 @@ async function autoHandleCycle() {
   });
   const cycleDef = def.cycle_definition || '';
   addSys('[사이클 정의] ' + cycleDef);
+  log('inf', '사이클 정의: ' + cycleDef);
   // 우측 패널에도 표시
   document.getElementById('lastCycleDef').style.display = 'block';
   document.getElementById('lastCycleDefText').textContent = cycleDef;
+
+  // 사이클 직후 상담사 브릿지 메시지 표시 + (mock) records INSERT
+  await applyCycleBridge(def);
+
   addSys('── 사이클 절차 완료 — 다음 라운드에 2단계 전환 예상 ──');
 
   STATE.needsCycle = false;
