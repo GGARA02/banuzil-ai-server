@@ -647,8 +647,16 @@ async def node_stage_transition_check(state: EFTState) -> EFTState:
             progress = min(75, 40 + s3 * 18)        # 40 → 58 → 75 (Step 8, 종료 방지)
         else:
             progress = min(100, 78 + (s3 - 3) * 12) # 78 → 90 → 100 (Step 9, 90 도달 종료)
-    else:
-        progress = result.get("progress", state.get("stage_progress", 0))
+    elif new_stage == 1:
+        # 1단계 진행도: 1단계 신호(4종 × 양측 = 8칸) 누적 개수 기반 (eval 모델 의존 제거)
+        on = (sum(1 for k in STAGE1_SIGNALS if signals.f.get(k))
+              + sum(1 for k in STAGE1_SIGNALS if signals.m.get(k)))
+        progress = min(90, round(on / 8 * 100))
+    else:  # new_stage == 2
+        # 2단계 진행도: 2단계 신호(4종 × 양측 = 8칸) 누적 개수 기반
+        on = (sum(1 for k in STAGE2_SIGNALS if signals.f.get(k))
+              + sum(1 for k in STAGE2_SIGNALS if signals.m.get(k)))
+        progress = min(90, round(on / 8 * 100))
 
     # 1단계 사이클 동의 필요 여부 (eft_stage_router에서 선행 판단한 결과 활용)
     needs_cycle = state.get("is_cycle_round", False)
