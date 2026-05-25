@@ -131,6 +131,8 @@ public class CycleExploreResponse {
 public class CycleDefinitionResponse {
     private Long sessionId;
     private String cycleDefinition;
+    private String fMessage;   // 추가 — 여성에게 전달할 상담사 브릿지 메시지 (빈 문자열 가능)
+    private String mMessage;   // 추가 — 남성에게 전달할 상담사 브릿지 메시지 (빈 문자열 가능)
 }
 
 public class ReportSections {
@@ -255,7 +257,8 @@ if (bothSubmitted) {
 
     // 사이클 정의 필요?
     if (aiResponse.isNeedsCycleDefinition()) {
-        // 사이클 절차 시작 (별도 API 엔드포인트 또는 WebSocket)
+        // → 아래 "사이클 처리 흐름" 참고
+        startCycleProcedure(session.getSessionId());
     }
 
     // 위험 감지?
@@ -284,6 +287,66 @@ if (session.getEftStage() == 3 && session.getStageProgress() >= 90) {
     session.complete();
 }
 ```
+
+#### 사이클 처리 흐름 (needs_cycle_definition == true 분기)
+
+`/ai/cycle`은 같은 엔드포인트를 **두 번** 호출하는 순차 절차다.
+
+```
+[1단계 — 탐색 질문 받기]
+
+POST /ai/cycle  ← f_explore_answer / m_explore_answer 없이 session_id만 전달
+   응답: CycleExploreResponse
+     - f_question: 여성에게 보여줄 상담사 탐색 질문
+     - m_question: 남성에게 보여줄 상담사 탐색 질문
+
+Spring: 각 내담자 화면에 탐색 질문 표시, 답변 수집 대기
+```
+
+```java
+CycleExploreResponse explore = aiServerClient.cycleExplore(sessionId);
+// explore.getFQuestion() → 여성 화면에 표시
+// explore.getMQuestion() → 남성 화면에 표시
+```
+
+```
+[2단계 — 사이클 정의 + 브릿지 메시지 받기]
+
+POST /ai/cycle  ← f_explore_answer + m_explore_answer 포함 전달
+   응답: CycleDefinitionResponse
+     - cycle_definition: 두 사람의 부정적 상호작용 패턴 정의문
+     - f_message: 여성에게 전달할 상담사 브릿지 메시지 (2단계로 초대)
+     - m_message: 남성에게 전달할 상담사 브릿지 메시지
+
+Spring 처리:
+  1. cycle_definition 양측에 표시 (공유 정보)
+  2. f_message → 여성 화면에 상담사 말풍선으로 표시
+  3. m_message → 남성 화면에 상담사 말풍선으로 표시
+  4. f_message / m_message → mediation_records INSERT (아래 참고)
+  5. 다음 라운드 진행 → AI 서버가 자동으로 2단계 전환 (Spring 별도 처리 없음)
+```
+
+```java
+CycleDefinitionResponse def = aiServerClient.cycleDefine(sessionId, fAnswer, mAnswer);
+
+// 표시
+showCycleDefinition(def.getCycleDefinition());
+showAiMessage("f", def.getFMessage());
+showAiMessage("m", def.getMMessage());
+
+// mediation_records INSERT (브릿지 히스토리 연속성)
+// content = NULL, ai_response = 메시지, round_number = 직전 완료 라운드
+if (!def.getFMessage().isEmpty()) {
+    recordRepository.insertBridge(sessionId, fUserId, def.getFMessage(), prevRound);
+}
+if (!def.getMMessage().isEmpty()) {
+    recordRepository.insertBridge(sessionId, mUserId, def.getMMessage(), prevRound);
+}
+```
+
+> `round_number`는 **직전 완료 라운드** (`current_round - 1`)로 넣어야 한다.
+> 다음 라운드 round-analyze 처리 시 AI 서버가 `round_number = 다음 라운드`로 UPDATE하는데,
+> 브릿지를 같은 번호에 넣으면 덮어써진다.
 
 ---
 
