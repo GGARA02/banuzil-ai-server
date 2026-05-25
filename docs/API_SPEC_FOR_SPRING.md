@@ -258,6 +258,7 @@ INSERT mediation_records (session_id, user_id=m_user_id, content=NULL/'',
 ### AI 서버가 DB에 직접 하는 것들 (Spring이 안 해도 되는 것)
 
 - `mediation_records.ai_response` UPDATE
+- `mediation_records.needs_cycle_definition` UPDATE (해당 라운드 f/m 두 행에 동일 값. Spring은 읽기만)
 - `mediation_sessions` EFT 상태 UPDATE (eft_stage, stage_progress 등)
 - `mediation_sessions.cycle_definition` UPDATE
 - `mediation_reports` INSERT

@@ -138,17 +138,19 @@ async def save_round_result(session_id: int, context: dict, result: dict) -> Non
 
     f_response = result.get("f_response", "")
     m_response = result.get("m_response", "")
+    needs_cycle = bool(result.get("needs_cycle_definition", False))
 
-    # 1. ai_response UPDATE (해당 라운드의 각 유저 record)
+    # 1. ai_response + needs_cycle_definition UPDATE (해당 라운드의 각 유저 record)
+    #    needs_cycle_definition은 라운드 단위 플래그라 f/m 두 행에 동일하게 기록.
     await supa.update(
         "mediation_records",
         {"session_id": f"eq.{session_id}", "round_number": f"eq.{round_num}", "user_id": f"eq.{f_user_id}"},
-        {"ai_response": f_response},
+        {"ai_response": f_response, "needs_cycle_definition": needs_cycle},
     )
     await supa.update(
         "mediation_records",
         {"session_id": f"eq.{session_id}", "round_number": f"eq.{round_num}", "user_id": f"eq.{m_user_id}"},
-        {"ai_response": m_response},
+        {"ai_response": m_response, "needs_cycle_definition": needs_cycle},
     )
 
     # 2. mediation_sessions EFT 상태 UPDATE
