@@ -49,6 +49,9 @@ async def round_analyze(req: RoundAnalyzeRequest):
     3. 결과 DB 저장
     4. Spring에 메시지 + 플래그만 반환
     """
+    logger.info(f"[round-analyze] REQ session={req.session_id} "
+                f"f_reply={req.f_reply[:30]!r} m_reply={req.m_reply[:30]!r}")
+
     # 1. DB 조회
     try:
         ctx = await fetch_session_context(req.session_id)
@@ -88,7 +91,7 @@ async def round_analyze(req: RoundAnalyzeRequest):
         logger.error(f"[{req.session_id}] DB 저장 실패: {e}")
 
     # 4. 응답
-    return RoundAnalyzeResponse(
+    response = RoundAnalyzeResponse(
         session_id             = req.session_id,
         f_message              = result.get("f_response", ""),
         m_message              = result.get("m_response", ""),
@@ -100,6 +103,12 @@ async def round_analyze(req: RoundAnalyzeRequest):
         bullet_type            = result.get("bullet_type", "None"),
         bullet_target          = result.get("bullet_target", ""),
     )
+    logger.info(f"[round-analyze] RES session={req.session_id} "
+                f"stage={response.eft_stage} progress={response.stage_progress} "
+                f"needs_cycle={response.needs_cycle_definition} risk={response.risk_flag} "
+                f"bullet={response.bullet_type} "
+                f"f_msg={response.f_message[:40]!r} m_msg={response.m_message[:40]!r}")
+    return response
 
 
 # ================================================================
@@ -112,6 +121,10 @@ async def cycle_analyze(req: CycleRequest):
     답변 없이 호출 → 탐색 질문 생성
     답변 포함 호출 → 사이클 정의 생성
     """
+    mode = "define" if (req.f_explore_answer or req.m_explore_answer) else "explore"
+    logger.info(f"[cycle] REQ session={req.session_id} mode={mode} "
+                f"f_ans={req.f_explore_answer[:30]!r} m_ans={req.m_explore_answer[:30]!r}")
+
     # DB에서 히스토리 조회
     try:
         ctx = await fetch_session_context(req.session_id)
@@ -134,11 +147,14 @@ async def cycle_analyze(req: CycleRequest):
             call_llm("", build_cycle_explore_prompt(False, m_hist_text),
                       model=EVAL_MODEL_NAME, max_tokens=400),
         )
-        return CycleExploreResponse(
+        res = CycleExploreResponse(
             session_id = req.session_id,
             f_question = f_q.strip(),
             m_question = m_q.strip(),
         )
+        logger.info(f"[cycle] RES explore session={req.session_id} "
+                    f"f_q={res.f_question[:60]!r} m_q={res.m_question[:60]!r}")
+        return res
     else:
         definition = await call_llm(
             "", build_cycle_definition_prompt(
@@ -200,12 +216,16 @@ async def cycle_analyze(req: CycleRequest):
         except Exception as e:
             logger.warning(f"[{req.session_id}] 브릿지 메시지 생성 실패 (무시): {e}")
 
-        return CycleDefinitionResponse(
+        res = CycleDefinitionResponse(
             session_id       = req.session_id,
             cycle_definition = definition,
             f_message        = f_message,
             m_message        = m_message,
         )
+        logger.info(f"[cycle] RES define session={req.session_id} "
+                    f"definition={definition[:80]!r} "
+                    f"f_msg={f_message[:40]!r} m_msg={m_message[:40]!r}")
+        return res
 
 
 # ================================================================
@@ -217,6 +237,8 @@ async def generate_final_report(req: ReportRequest):
     세션 히스토리 전체를 바탕으로 최종 보고서 생성.
     DB에서 모든 데이터를 직접 조회.
     """
+    logger.info(f"[report] REQ session={req.session_id}")
+
     try:
         ctx = await fetch_session_context(req.session_id)
     except ValueError as e:
@@ -259,6 +281,9 @@ async def generate_final_report(req: ReportRequest):
         except Exception as e:
             logger.warning(f"[{req.session_id}] 임베딩 저장 실패 (무시): {e}")
 
+    logger.info(f"[report] RES session={req.session_id} "
+                f"f_emotion={f_sections.get('emotion_summary','')[:40]!r} "
+                f"m_emotion={m_sections.get('emotion_summary','')[:40]!r}")
     return ReportResponse(
         session_id = req.session_id,
         f_report   = ReportSections(**f_sections),
