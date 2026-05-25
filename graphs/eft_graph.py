@@ -309,10 +309,16 @@ def node_eft_stage_router(state: EFTState) -> EFTState:
             elif cur1 >= CYCLE_FORCE_ROUNDS:
                 is_cycle_round = True
 
+    # 사이클 요청 라운드에 cycle_skip_until을 round+3으로 세팅.
+    # 수락 시 → cycle_definition이 채워져 1→2 전환, skip값 무관.
+    # 거절 시 → cycle_definition 비어있음 + round_num < skip → 2라운드 자동 스킵.
+    new_cycle_skip = (round_num + 3) if is_cycle_round else state.get("cycle_skip_until", 0)
+
     return {
         **state,
-        "stage_rounds":   stage_rounds,
-        "is_cycle_round": is_cycle_round,
+        "stage_rounds":     stage_rounds,
+        "is_cycle_round":   is_cycle_round,
+        "cycle_skip_until": new_cycle_skip,
     }
 
 
