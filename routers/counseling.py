@@ -96,6 +96,9 @@ async def round_analyze(req: RoundAnalyzeRequest):
         risk_flag              = result.get("risk_flag", False),
         eft_stage              = result.get("eft_stage", ctx["eft_stage"]),
         stage_progress         = result.get("stage_progress", ctx["stage_progress"]),
+        bullet_detected        = result.get("bullet_detected", False),
+        bullet_type            = result.get("bullet_type", "None"),
+        bullet_target          = result.get("bullet_target", ""),
     )
 
 

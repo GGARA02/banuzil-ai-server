@@ -42,8 +42,9 @@ EMOTION_WEIGHT: float = float(os.getenv("EMOTION_WEIGHT","0.3"))       # 감성 
 
 # ── 총알잡기 감지 설정 ─────────────────────────────────────
 BULLET_DETECTION_ENABLED: bool  = os.getenv("BULLET_DETECTION_ENABLED","true").lower() == "true"
-# 총알 감지 민감도: 0~1. 공포회피형 결합 시 코드에서 낮춰서 적용
-BULLET_THRESHOLD: float = float(os.getenv("BULLET_THRESHOLD","0.6"))
+# 총알 감지 민감도: confidence가 이 값 이상일 때만 총알로 인정.
+# 값이 높을수록 드물게 발동(약하게 적용). LLM confidence는 굵직하게 몰려서 소수점 미세조정은 무의미 → 0.9는 "확실한 공격에만 발동".
+BULLET_THRESHOLD: float = float(os.getenv("BULLET_THRESHOLD","0.9"))
 
 # ── Self-Refine 설정 ──────────────────────────────────────
 MAX_REFINE: int = int(os.getenv("MAX_REFINE","3"))    # 최대 재생성 횟수

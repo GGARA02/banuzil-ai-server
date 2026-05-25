@@ -17,6 +17,64 @@
 
 ---
 
+## 스키마 변경 정리 — 기존 vs 변경 + 적용 이유
+
+### DB 스키마: **변경 없음**
+
+- 새 테이블·새 컬럼 **없음**. 기존 `mediation_records`의 컬럼(`content`, `ai_response`,
+  `round_number`)을 그대로 사용한다. **마이그레이션 불필요.**
+- 다만 사용 방식이 하나 늘어난다: 지금까지 `mediation_records`는 "유저 발화 1행"이었는데,
+  이제 **유저 발화 없이 `ai_response`만 채운 행(브릿지)** 이 추가될 수 있다.
+
+### API 응답 스키마: `CycleDefinitionResponse` 필드 추가
+
+| 필드 | 기존 | 변경 | 비고 |
+|------|------|------|------|
+| `session_id` | ✅ | ✅ | 그대로 |
+| `cycle_definition` | ✅ | ✅ | 그대로 |
+| `f_message` | ✖ | ✅ **추가** | 여성에게 줄 상담사 브릿지 메시지(빈 문자열 가능) |
+| `m_message` | ✖ | ✅ **추가** | 남성에게 줄 상담사 브릿지 메시지(빈 문자열 가능) |
+
+```
+// 기존
+{ "session_id": 1, "cycle_definition": "..." }
+
+// 변경
+{ "session_id": 1, "cycle_definition": "...", "f_message": "...", "m_message": "..." }
+```
+
+### 적용 이유 (왜 바꾸나)
+
+- 기존: `/ai/cycle` 정의 모드가 사이클 정의문만 반환 → 정의가 끝나면 **내담자에게 줄 상담사
+  발화가 없어**, 사용자가 무엇에 응답할지 모르는 빈 구간이 생겼다.
+- 변경: 사이클을 따뜻하게 비춰주고 2단계(더 깊은 마음 표현)로 잇는 **상담사 메시지**를
+  양측별로 함께 반환 → 사용자가 이어서 답할 대상이 생기고, DB에 남기면 다음 라운드
+  히스토리로도 연결된다(상담 연속성).
+- DTO만 늘렸으므로 **하위 호환**: 구버전 Spring이 새 필드를 무시해도 동작에 지장 없다.
+
+### 어떻게 수정하나 (요약)
+
+1. 응답 DTO에 `f_message`/`m_message` 필드 추가(아래 예시)
+2. 두 메시지를 각 내담자 화면에 상담사 메시지로 표시
+3. 두 메시지를 `mediation_records`에 INSERT(`content=NULL`, `ai_response=메시지`,
+   `round_number=직전 완료 라운드`)
+4. 대화창을 records로 그릴 경우, `content` 빈 행은 유저 말풍선 생략
+
+```java
+// 1) 응답 DTO 필드 추가 (예: CycleDefinitionResponse.java)
+public class CycleDefinitionResponse {
+    private Long   sessionId;
+    private String cycleDefinition;
+    private String fMessage;   // 추가 (nullable / 빈 문자열 가능)
+    private String mMessage;   // 추가
+    // getter/setter ...
+}
+```
+
+상세 수정 절차는 아래 "Spring이 해야 할 일"과 끝의 체크리스트 참고.
+
+---
+
 ## #1 사이클 브릿지 메시지 — 무엇이 바뀌었나
 
 기존에 `/ai/cycle` 정의 모드는 `cycle_definition`만 반환했다. 그래서 사이클 정의가 끝나면

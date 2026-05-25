@@ -17,6 +17,10 @@ class RoundAnalyzeResponse(BaseModel):
     # 진행 상태 가시화용 (Spring은 무시 가능, 테스트/디버그·UI 표시용)
     eft_stage: int = 1
     stage_progress: int = 0
+    # 총알잡기 감지 결과 (테스트/디버그용, Spring 무시 가능)
+    bullet_detected: bool = False
+    bullet_type: str = "None"      # "Reactive" / "Mistrust" / "None"
+    bullet_target: str = ""        # "f" / "m" / ""
 
 
 class CycleExploreResponse(BaseModel):

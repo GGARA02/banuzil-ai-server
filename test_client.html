@@ -589,6 +589,13 @@ async function sendRound() {
     addSys(`R${STATE.roundNum} · ${stageLabel} · 진행도 ${STATE.stageProgress}%`);
     log('inf', `R${STATE.roundNum} | stage=${STATE.eftStage} | progress=${STATE.stageProgress}%`);
 
+    // 총알잡기 발동 시 로그
+    if (data.bullet_detected) {
+      const tgt = data.bullet_target === 'f' ? '여성' : data.bullet_target === 'm' ? '남성' : '?';
+      addSys(`⚡ 총알 적용 R${STATE.roundNum} — 유형: ${data.bullet_type}, 발화자: ${tgt}`);
+      log('inf', `bullet detected R${STATE.roundNum}: ${data.bullet_type} / target=${data.bullet_target}`);
+    }
+
     if (data.needs_cycle_definition) {
       addSys('사이클 정의 절차 필요');
       STATE.needsCycle = true;
@@ -878,10 +885,11 @@ const SCENARIOS = {
 
 // 자동 시뮬레이션 공통 말투 — 반말/거친 구어체 + 중강도 에고 (진짜 사람처럼)
 const SIM_TALK_STYLE = `[말투·태도 규칙 — 반드시 지켜]
-- 상담사한테도 정중한 존댓말 쓰지 마. 친구한테 툴툴대듯 반말/거친 구어체로 말해. "~했어", "~잖아", "~냐고", "아 몰라 그냥~" 처럼.
-- 1~2문장으로 짧게. 두서없어도 되고 말끝 흐려도 돼. 정리된 문어체·모범답안식 말투 절대 금지.
-- 에고(중강도): 상담사 말에 곧바로 수긍하지 마. 가끔 되받아치거나("아니 그게 그렇게 간단한 게 아니라"), 비꼬거나, 같은 서운함·답답함을 반복하거나, "글쎄", "아 몰라" 하고 회피해. 단 욕설이나 인신공격은 하지 마.
-- 한 번에 다 깨닫지 마. 라운드가 꽤 지나야 마음이 조금씩 누그러지는 게 자연스러워.`;
+- 상담사한테도 정중한 존댓말 쓰지 마. 친구한테 툴툴대듯 반말/거친 구어체로 말해(예: "~했어", "~잖아", "~냐고").
+- 1~2문장으로 짧게. 두서없어도 되고 말끝 흐려도 돼. 정리된 문어체·모범답안식 말투 금지.
+- 에고(중강도): 상담사 말에 곧바로 다 수긍하진 마. 가끔 되받아치거나, 비꼬거나, 회피해도 돼. 단 욕설·인신공격은 금지.
+- [반복 금지] 같은 문장·같은 입버릇을 매 라운드 똑같이 쓰지 마. 직전 라운드에 쓴 표현·어투는 피하고 매번 다르게 말해. 특히 "아 몰라", "그게 그렇게 간단한 게 아니라" 같은 말을 계속 우려먹지 마.
+- [진전 필수] 한 번에 다 깨닫진 말되, 라운드가 지날수록 방어를 한 겹씩 내려놔. 표면의 짜증·답답함 아래 진짜 속마음(두려움·외로움·바라는 것)을 조금씩 더 구체적으로 꺼내고, 후반 라운드에서는 상담사 말에 일부 수긍하거나 누그러진 모습도 보여. 같은 자리에서 똑같은 불평만 맴돌지 마.`;
 
 function setAutoStatus(msg) {
   document.getElementById('autoStatus').textContent = msg;
