@@ -28,7 +28,12 @@ app.add_middleware(
 
 app.include_router(emotion.router)
 app.include_router(counseling.router)
-app.include_router(mock_router.router)
+
+# Mock 라우터는 개발 환경에서만 등록한다.
+# 운영에 노출되면 /ai/mock/init-session 한 번으로 supa가 전역 mock으로 전환되어
+# Spring 등 실제 트래픽이 모두 mock DB를 바라보게 되는 사고가 난다.
+if os.getenv("ENABLE_MOCK", "false").lower() == "true":
+    app.include_router(mock_router.router)
 
 # 테스트 클라이언트 HTML 서빙
 @app.get("/test")
