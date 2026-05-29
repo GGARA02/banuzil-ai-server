@@ -126,8 +126,24 @@ EFT 1단계에서 부정적 상호작용 사이클을 정의하는 절차.
 | 필드 | 타입 | 필수 | 설명 |
 |------|------|------|------|
 | `session_id` | int | O | |
-| `f_explore_answer` | string | △ | 여성 탐색 답변 (빈 문자열이면 탐색 모드) |
+| `f_explore_answer` | string | △ | 여성 탐색 답변 |
 | `m_explore_answer` | string | △ | 남성 탐색 답변 |
+
+> **⚠ 정의 모드는 양측 답변이 모두 있어야만 진행된다.**
+> - `f_explore_answer`, `m_explore_answer`가 **둘 다 빈 문자열** → 탐색 모드(2-1)
+> - **둘 다 채워짐** → 정의 모드(아래) 진행
+> - **한쪽만 채워짐** → **400 에러** 반환 (정의 생성·DB 저장 안 함)
+>
+> 한쪽씩 따로 호출하면 매 호출이 서로 다른 사이클 정의를 생성·덮어써 사용자별로 다른
+> 정의가 나온다. 이를 막기 위해 **양측 답변을 한 요청에 모두 담아 한 번만 호출**해야 한다.
+
+#### Response (400) — 한쪽 답변만 전달 시
+
+```json
+{
+  "detail": "사이클 정의는 양측 답변이 모두 필요합니다. 누락된 필드: m_explore_answer"
+}
+```
 
 #### Response (200 OK) — CycleDefinitionResponse
 
@@ -176,8 +192,8 @@ INSERT mediation_records (session_id, user_id=m_user_id, content=NULL/'',
 ```
 1. round-analyze 응답에서 needs_cycle_definition == true
 2. POST /ai/cycle (답변 없이) → 탐색 질문을 양측에 전달
-3. 양측 답변 수집
-4. POST /ai/cycle (답변 포함) → 사이클 정의 + 브릿지 메시지(f_message/m_message) 생성
+3. 양측 답변 수집 (둘 다 모일 때까지 대기 — 한쪽만 보내면 400)
+4. POST /ai/cycle (양측 답변 모두 포함) → 사이클 정의 + 브릿지 메시지(f_message/m_message) 생성
    (AI 서버가 cycle_definition을 DB에 저장)
 5. cycle_definition과 f_message/m_message를 양측에 보여줌
    + f_message/m_message를 mediation_records에 INSERT (위 "브릿지 메시지 영속화" 참고)

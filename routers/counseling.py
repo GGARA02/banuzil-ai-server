@@ -121,7 +121,23 @@ async def cycle_analyze(req: CycleRequest):
     답변 없이 호출 → 탐색 질문 생성
     답변 포함 호출 → 사이클 정의 생성
     """
-    mode = "define" if (req.f_explore_answer or req.m_explore_answer) else "explore"
+    has_f = bool(req.f_explore_answer)
+    has_m = bool(req.m_explore_answer)
+
+    # 사이클 정의(define)는 양측 답변이 모두 있어야만 진행한다.
+    # 한쪽 답변만 들어오면 정의를 생성하지 않고 400을 반환한다.
+    # (한쪽씩 호출되면 매 호출이 서로 다른 정의를 생성·덮어써 사용자별로
+    #  다른 사이클 정의가 나오는 레이스 컨디션을 방지)
+    if has_f != has_m:
+        missing = "m_explore_answer" if has_f else "f_explore_answer"
+        logger.warning(f"[cycle] REJECT session={req.session_id} "
+                       f"한쪽 답변만 수신 — 누락: {missing}")
+        raise HTTPException(
+            status_code=400,
+            detail=f"사이클 정의는 양측 답변이 모두 필요합니다. 누락된 필드: {missing}",
+        )
+
+    mode = "define" if (has_f and has_m) else "explore"
     logger.info(f"[cycle] REQ session={req.session_id} mode={mode} "
                 f"f_ans={req.f_explore_answer[:30]!r} m_ans={req.m_explore_answer[:30]!r}")
 
@@ -140,7 +156,7 @@ async def cycle_analyze(req: CycleRequest):
         for h in ctx["m_history"]
     )
 
-    if not req.f_explore_answer and not req.m_explore_answer:
+    if not has_f and not has_m:
         f_q, m_q = await asyncio.gather(
             call_llm("", build_cycle_explore_prompt(True,  f_hist_text),
                       model=EVAL_MODEL_NAME, max_tokens=400),
