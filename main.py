@@ -8,6 +8,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 import os
+import logging
+
+# 로깅 레벨 설정 — 미설정 시 기본값이 WARNING이라
+# routers의 logger.info([round-analyze] REQ/RES ...)가 전부 묻힌다.
+# LOG_LEVEL 환경변수로 조정 가능 (기본 INFO).
+logging.basicConfig(
+    level=os.getenv("LOG_LEVEL", "INFO").upper(),
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
 
 from routers import emotion, counseling, mock_router
 from services.supabase_client import supa

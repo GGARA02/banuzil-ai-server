@@ -11,8 +11,8 @@ from pydantic import BaseModel, Field
 class RoundAnalyzeRequest(BaseModel):
     """POST /ai/round-analyze"""
     session_id: int = Field(..., description="세션 ID")
-    f_reply: str = Field(..., max_length=500)
-    m_reply: str = Field(..., max_length=500)
+    f_reply: str = Field(..., max_length=1000)
+    m_reply: str = Field(..., max_length=1000)
     bullet_enabled: bool | None = Field(None, description="총알잡기 오버라이드 (None=서버 기본값)")
     max_refine: int | None = Field(None, description="Self-Refine 오버라이드 (0=비활성, None=서버 기본값)")
 
