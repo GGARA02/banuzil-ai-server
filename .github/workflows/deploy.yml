@@ -1,4 +1,4 @@
-name: EC2 자동 배포
+﻿name: EC2 자동 배포
 
 on:
   push:
@@ -29,6 +29,8 @@ jobs:
             cd ~/banuzil-ai-server
             git pull
             sudo docker compose up --build -d
+            sudo docker image prune -f
+            sudo docker builder prune -f --keep-storage 3GB
 
       - name: 재시도 대기 (1차 실패 시)
         if: steps.try1.outcome == 'failure'
@@ -51,6 +53,8 @@ jobs:
             cd ~/banuzil-ai-server
             git pull
             sudo docker compose up --build -d
+            sudo docker image prune -f
+            sudo docker builder prune -f --keep-storage 3GB
 
       - name: 재시도 대기 (2차 실패 시)
         if: steps.try1.outcome == 'failure' && steps.try2.outcome == 'failure'
@@ -71,3 +75,5 @@ jobs:
             cd ~/banuzil-ai-server
             git pull
             sudo docker compose up --build -d
+            sudo docker image prune -f
+            sudo docker builder prune -f --keep-storage 3GB
