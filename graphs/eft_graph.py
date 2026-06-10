@@ -166,8 +166,10 @@ def node_risk_gate(state: EFTState) -> EFTState:
                 risk_category = category
 
     # IPV 위험 결합에서 추가 데이트폭력 키워드 확장
+    # 감정 표현 단어(무서워/두려워/겁나)는 EFT가 유도하는 정상적인
+    # 취약성 표현과 충돌해 오탐이 많아 제외 — 물리적 단서만 유지
     if ipv_risk:
-        extra_ipv = ["무서워", "두려워", "겁나", "맞아", "맞았", "밀쳐"]
+        extra_ipv = ["맞아", "맞았", "밀쳐"]
         for kw in extra_ipv:
             if kw in combined:
                 found_keywords.append(kw)
